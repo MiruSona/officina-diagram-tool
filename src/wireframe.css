@@ -1,0 +1,177 @@
+/* UI 와이어프레임. 색을 칠하지 않는다 — 자리와 크기만 본다.
+   쓰는 법 : <link rel="stylesheet" href="../../Tools/Draw/wireframe.css"> */
+
+:root {
+  --wf-bg: #0f1013;
+  --wf-line: #4a4a52;
+  --wf-fill: #1b1c21;
+  --wf-text: #cfd1d8;
+  --wf-dim: #8d8f98;
+}
+
+body.wf {
+  background: var(--wf-bg);
+  color: var(--wf-text);
+  font-family: "Malgun Gothic", sans-serif;
+  padding: 24px;
+}
+
+.wf-screen {
+  position: relative;
+  width: 640px;
+  height: 360px;
+  border: 2px solid var(--wf-line);
+  background: var(--wf-fill);
+  display: grid;
+  gap: 8px;
+  padding: 8px;
+}
+
+.wf-screen[data-size="세로"] {
+  width: 360px;
+  height: 640px;
+}
+
+/* 화면 이름표. 어느 화면인지 헷갈리지 않게 왼쪽 위에 박는다. */
+.wf-screen::before {
+  content: attr(data-name);
+  position: absolute;
+  top: -22px;
+  left: 0;
+  font-size: 12px;
+  color: var(--wf-dim);
+}
+
+.wf-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.wf-col {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.wf-btn,
+.wf-input,
+.wf-list,
+.wf-nav,
+.wf-slot,
+.wf-bar,
+.wf-hud,
+.wf-modal,
+.wf-box {
+  border: 1px solid var(--wf-line);
+  color: var(--wf-dim);
+  font-size: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 28px;
+  padding: 4px 8px;
+}
+
+.wf-btn {
+  border-radius: 4px;
+  min-width: 72px;
+}
+
+.wf-input {
+  justify-content: flex-start;
+  min-width: 160px;
+}
+
+.wf-input::after {
+  content: "입력";
+  color: var(--wf-dim);
+  opacity: 0.6;
+}
+
+.wf-list {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 4px;
+  min-height: 96px;
+}
+
+.wf-list > * {
+  border-bottom: 1px dashed var(--wf-line);
+  padding: 4px;
+}
+
+.wf-nav {
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.wf-grid {
+  display: grid;
+  grid-template-columns: repeat(var(--wf-cols, 4), 1fr);
+  gap: 6px;
+}
+
+.wf-slot {
+  aspect-ratio: 1;
+  min-height: 40px;
+}
+
+/* 체력·경험치 같은 채워지는 막대. --wf-fill-pct 로 찬 만큼 표시한다. */
+.wf-bar {
+  position: relative;
+  height: 16px;
+  min-height: 16px;
+  padding: 0;
+  overflow: hidden;
+}
+
+.wf-bar::before {
+  content: "";
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: var(--wf-fill-pct, 60%);
+  background: var(--wf-line);
+  opacity: 0.5;
+}
+
+.wf-hud {
+  position: absolute;
+  background: transparent;
+  border-style: dashed;
+}
+
+.wf-hud[data-at="좌상"] { top: 8px; left: 8px; }
+.wf-hud[data-at="우상"] { top: 8px; right: 8px; }
+.wf-hud[data-at="좌하"] { bottom: 8px; left: 8px; }
+.wf-hud[data-at="우하"] { bottom: 8px; right: 8px; }
+
+.wf-modal {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 60%;
+  min-height: 40%;
+  background: var(--wf-bg);
+  flex-direction: column;
+  gap: 8px;
+}
+
+/* 아직 안 정한 자리. 눈에 띄게 빗금을 친다. */
+.wf-todo {
+  border-style: dashed;
+  background: repeating-linear-gradient(
+    45deg,
+    transparent,
+    transparent 6px,
+    rgba(255, 255, 255, 0.04) 6px,
+    rgba(255, 255, 255, 0.04) 12px
+  );
+}
+
+.wf-note {
+  color: var(--wf-dim);
+  font-size: 12px;
+  margin: 4px 0 16px;
+}

@@ -4,6 +4,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const { parseFenced, parseTable } = require('./common');
 
 const PROFILE_PATH = path.join(__dirname, 'profiles.json');
 
@@ -71,17 +72,29 @@ function parseBlocks(text) {
   const lines = text.split(/\r?\n/);
   const blocks = [];
   let current = null;
+  let justClosed = null;
 
   for (const line of lines) {
     if (current === null) {
       if (/^```+\s*tilemap\b/.test(line)) {
         current = { header: parseHeader(line), grid: [], legend: {} };
+        justClosed = null;
+        continue;
+      }
+      // 범례는 펜스 바로 아래에 적는 일이 많다. 그 줄만 블록에 넣어 준다.
+      if (justClosed && /^(범례|해답)/.test(line)) {
+        justClosed.grid.push(line);
+        continue;
+      }
+      if (justClosed && line.trim() === '') {
+        justClosed = null;
       }
       continue;
     }
 
     if (/^```+\s*$/.test(line)) {
       blocks.push(current);
+      justClosed = current;
       current = null;
       continue;
     }
@@ -280,7 +293,130 @@ function checkReachable(grid, profile, start, errors) {
   return seen;
 }
 
-function validate(block, profiles) {
+// 검사 4a. 점프로 못 올라가는 발판을 잡는다.
+// 모델은 단순하다 — 땅에서만 점프를 시작하고, 위로 h칸 · 공중에서 옆으로 dist칸까지 간다.
+// 더블 점프·대시·벽타기는 아직 안 본다.
+function checkJump(grid, profile, start, baseline, errors) {
+  if (!start) {
+    return null;
+  }
+
+  const chars = profile.문자;
+  const h = baseline.점프높이;
+  const dist = baseline.점프거리;
+
+  const at = (x, y) => {
+    if (y < 0 || y >= grid.length) {
+      return null;
+    }
+    if (x < 0 || x >= grid[y].length) {
+      return null;
+    }
+    return chars[grid[y][x]];
+  };
+  const passable = (x, y) => {
+    const spec = at(x, y);
+    if (!spec) {
+      return false;
+    }
+    return spec.지나감;
+  };
+  const solid = (x, y) => {
+    const spec = at(x, y);
+    if (!spec) {
+      return true;
+    }
+    return !spec.지나감;
+  };
+  const deadly = (x, y) => grid[y][x] === '^';
+  const ladder = (x, y) => grid[y][x] === '~';
+  const onGround = (x, y) => solid(x, y + 1) || ladder(x, y);
+
+  // 상태 = 칸 + 남은 점프 높이 + 남은 공중 가로 이동
+  const seen = new Set();
+  const cells = new Set();
+  const stateKey = (s) => `${s.x},${s.y},${s.up},${s.air}`;
+  const queue = [{ x: start.x, y: start.y, up: h, air: dist }];
+
+  while (queue.length > 0) {
+    const cur = queue.shift();
+    if (seen.has(stateKey(cur))) {
+      continue;
+    }
+    seen.add(stateKey(cur));
+    cells.add(`${cur.x},${cur.y}`);
+
+    if (deadly(cur.x, cur.y)) {
+      continue;
+    }
+
+    let up = cur.up;
+    let air = cur.air;
+    if (onGround(cur.x, cur.y)) {
+      up = h;
+      air = dist;
+    }
+
+    if (!onGround(cur.x, cur.y) && passable(cur.x, cur.y + 1)) {
+      queue.push({ x: cur.x, y: cur.y + 1, up: 0, air });
+    }
+    if (ladder(cur.x, cur.y) && passable(cur.x, cur.y + 1)) {
+      queue.push({ x: cur.x, y: cur.y + 1, up: h, air: dist });
+    }
+    if (up > 0 && passable(cur.x, cur.y - 1)) {
+      queue.push({ x: cur.x, y: cur.y - 1, up: up - 1, air });
+    }
+
+    for (const dx of [-1, 1]) {
+      if (!passable(cur.x + dx, cur.y)) {
+        continue;
+      }
+      if (onGround(cur.x, cur.y)) {
+        queue.push({ x: cur.x + dx, y: cur.y, up, air });
+        continue;
+      }
+      if (air > 0) {
+        queue.push({ x: cur.x + dx, y: cur.y, up, air: air - 1 });
+      }
+    }
+  }
+
+  const stuck = [];
+  grid.forEach((row, y) => {
+    for (let x = 0; x < row.length; x += 1) {
+      if (!passable(x, y) || deadly(x, y) || !onGround(x, y)) {
+        continue;
+      }
+      if (cells.has(`${x},${y}`)) {
+        continue;
+      }
+      stuck.push({ x, y, ch: row[x] });
+    }
+  });
+
+  if (stuck.length > 0) {
+    const shown = stuck.slice(0, 8).map((s) => `${s.x + 1}열 ${s.y + 1}행`);
+    let 글 = `점프로 못 올라가는 발판이 ${stuck.length}칸 있다. ${shown.join(', ')}`;
+    if (stuck.length > shown.length) {
+      글 += ' …';
+    }
+    글 += ` (점프 높이 ${h} · 거리 ${dist} 기준)`;
+    errors.push({ 검사: '4a', 글 });
+  }
+
+  for (const ch of ['C', 'S', 'E']) {
+    for (const spot of findChar(grid, ch)) {
+      if (cells.has(`${spot.x},${spot.y}`)) {
+        continue;
+      }
+      errors.push({ 검사: '4a', 글: `'${ch}' (${spot.x + 1}열 ${spot.y + 1}행) 에 못 간다.` });
+    }
+  }
+
+  return cells;
+}
+
+function validate(block, profiles, baseline) {
   const name = pickProfileName(block.header, profiles);
   const profile = getProfile(profiles, name);
   const on = profile.검사 || [];
@@ -300,8 +436,45 @@ function validate(block, profiles) {
   if (on.includes('4b')) {
     checkReachable(block.grid, profile, start, errors);
   }
+  if (on.includes('4a')) {
+    checkJump(block.grid, profile, start, baseline, errors);
+  }
 
   return { profileName: name, profile, errors };
+}
+
+const DEFAULT_BASELINE = { 점프높이: 4, 점프거리: 5 };
+
+// baseline 표에서 점프 값을 뽑는다. 표가 없으면 기본값을 쓴다.
+function loadBaseline(text, wanted) {
+  const blocks = parseFenced(text, ['baseline']);
+  if (blocks.length === 0) {
+    return Object.assign({}, DEFAULT_BASELINE);
+  }
+
+  let block = blocks[0];
+  if (wanted) {
+    const found = blocks.find((b) => b.header.name === wanted);
+    if (found) {
+      block = found;
+    }
+  }
+
+  const baseline = Object.assign({}, DEFAULT_BASELINE);
+  for (const row of parseTable(block.lines).rows) {
+    const label = row['항목'];
+    const value = Number(row['값']);
+    if (Number.isNaN(value)) {
+      continue;
+    }
+    if (label === '점프 최고 높이') {
+      baseline.점프높이 = value;
+    }
+    if (label === '점프 최대 거리') {
+      baseline.점프거리 = value;
+    }
+  }
+  return baseline;
 }
 
 function renderPreview(grid, profile) {
@@ -397,13 +570,14 @@ function main() {
   }
 
   const profiles = loadProfiles();
-  const blocks = parseBlocks(fs.readFileSync(file, 'utf8'));
+  const text = fs.readFileSync(file, 'utf8');
+  const blocks = parseBlocks(text);
   if (blocks.length === 0) {
     console.log('tilemap 블록을 못 찾았다.');
     process.exit(2);
   }
 
-  const results = blocks.map((b) => validate(b, profiles));
+  const results = blocks.map((b) => validate(b, profiles, loadBaseline(text, b.header.baseline)));
   let bad = 0;
 
   blocks.forEach((block, i) => {
@@ -442,4 +616,4 @@ if (require.main === module) {
   main();
 }
 
-module.exports = { parseBlocks, validate, renderHtml, renderPreview, loadProfiles, getProfile };
+module.exports = { parseBlocks, validate, renderHtml, renderPreview, loadProfiles, getProfile, loadBaseline };

@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="ko">
+<meta charset="utf-8">
+<title>와이어프레임 견본</title>
+<link rel="stylesheet" href="../../../Tools/Draw/wireframe.css">
+<body class="wf">
+
+<h2>1. 전투 화면 HUD</h2>
+<p class="wf-note">가로 640x360 기준. 자리와 크기만 본다. 색은 게임 화면이 아니라 <b>도면 색</b>이다.</p>
+
+<div class="wf-screen" data-name="전투 HUD">
+  <div class="wf-hud" data-at="좌상">
+    <div class="wf-col">
+      <div class="wf-bar" style="--wf-fill-pct:72%; width:180px">체력</div>
+      <div class="wf-bar" style="--wf-fill-pct:35%; width:180px">기력</div>
+    </div>
+  </div>
+
+  <div class="wf-hud" data-at="우상">소지금 / 시간</div>
+
+  <div class="wf-hud" data-at="좌하">
+    <div class="wf-grid" style="--wf-cols:4; width:200px">
+      <div class="wf-slot">1</div>
+      <div class="wf-slot">2</div>
+      <div class="wf-slot">3</div>
+      <div class="wf-slot">4</div>
+    </div>
+  </div>
+
+  <div class="wf-hud wf-todo" data-at="우하" style="width:120px;height:60px">미니맵 (미정)</div>
+</div>
+
+<h2 style="margin-top:48px">2. 인벤토리</h2>
+
+<div class="wf-screen" data-name="인벤토리">
+  <div class="wf-nav">
+    <div class="wf-btn">장비</div>
+    <div class="wf-btn">소모품</div>
+    <div class="wf-btn">재료</div>
+    <div class="wf-btn">닫기</div>
+  </div>
+
+  <div class="wf-row" style="align-items:stretch">
+    <div class="wf-grid" style="--wf-cols:5; flex:2">
+      <div class="wf-slot"></div><div class="wf-slot"></div><div class="wf-slot"></div>
+      <div class="wf-slot"></div><div class="wf-slot"></div><div class="wf-slot"></div>
+      <div class="wf-slot"></div><div class="wf-slot"></div><div class="wf-slot"></div>
+      <div class="wf-slot"></div>
+    </div>
+
+    <div class="wf-col" style="flex:1">
+      <div class="wf-box" style="min-height:120px">아이템 설명</div>
+      <div class="wf-btn">쓰기</div>
+      <div class="wf-btn">버리기</div>
+    </div>
+  </div>
+</div>
+
+<h2 style="margin-top:48px">3. 확인 창</h2>
+
+<div class="wf-screen" data-name="확인 창">
+  <div class="wf-modal">
+    <div>정말 버릴까요?</div>
+    <div class="wf-row">
+      <div class="wf-btn">예</div>
+      <div class="wf-btn">아니오</div>
+    </div>
+  </div>
+</div>
+
+</body>
+</html>
