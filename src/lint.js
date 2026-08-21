@@ -4,12 +4,25 @@
 
 const fs = require('fs');
 const path = require('path');
-const { parseFenced, parseTable, parseDict, parseAmounts } = require('./common');
+const { parseFenced, parseTable, parseDict, parseAmounts, mermaidId, parseArgs } = require('./common');
 
 const PROFILE_PATH = path.join(__dirname, 'profiles.json');
 
 function loadProfiles() {
   return JSON.parse(fs.readFileSync(PROFILE_PATH, 'utf8'));
+}
+
+// 프로필이 다른 프로필을 물려받으면 합쳐서 돌려준다. tilemap.js 와 같은 규칙이다.
+function getProfile(profiles, name) {
+  const found = profiles[name];
+  if (!found) {
+    return null;
+  }
+  if (!found.상속) {
+    return found;
+  }
+  const parent = getProfile(profiles, found.상속);
+  return Object.assign({}, parent || {}, found);
 }
 
 // "시작자원: 밀,물" 처럼 표 아래 한 줄로 적는 목록
@@ -56,6 +69,7 @@ function readChain(block) {
     넣는것: parseAmounts(row['넣는 것']),
     나오는것: parseAmounts(row['나오는 것']),
     초당: Number(row['초당'] || 1),
+    채수: Number(row['채수'] || 1),
     테크: (row['해금 테크'] || '—').trim(),
   }));
 
@@ -163,12 +177,14 @@ function lintChain(chain, techs, on, report) {
 
   for (const b of chain.buildings) {
     for (const a of b.넣는것) {
-      consumed.set(a.이름, (consumed.get(a.이름) || 0) + a.개수 * b.초당);
-      balance.set(a.이름, (balance.get(a.이름) || 0) - a.개수 * b.초당);
+      const amount = a.개수 * b.초당 * b.채수;
+      consumed.set(a.이름, (consumed.get(a.이름) || 0) + amount);
+      balance.set(a.이름, (balance.get(a.이름) || 0) - amount);
     }
     for (const a of b.나오는것) {
-      produced.set(a.이름, (produced.get(a.이름) || 0) + a.개수 * b.초당);
-      balance.set(a.이름, (balance.get(a.이름) || 0) + a.개수 * b.초당);
+      const amount = a.개수 * b.초당 * b.채수;
+      produced.set(a.이름, (produced.get(a.이름) || 0) + amount);
+      balance.set(a.이름, (balance.get(a.이름) || 0) + amount);
     }
   }
 
@@ -232,21 +248,39 @@ function lintChain(chain, techs, on, report) {
   }
 
   if (on.includes('C6')) {
+    // 자원 사슬 : 재료 -> 만들어지는 것 방향으로 잇는다.
     const edges = new Map();
     for (const b of chain.buildings) {
-      for (const out of b.나오는것) {
-        const from = out.이름;
-        if (!edges.has(from)) {
-          edges.set(from, []);
+      for (const need of b.넣는것) {
+        if (!edges.has(need.이름)) {
+          edges.set(need.이름, []);
         }
-        for (const need of b.넣는것) {
-          edges.get(from).push(need.이름);
+        for (const out of b.나오는것) {
+          edges.get(need.이름).push(out.이름);
         }
       }
     }
     const cycle = findCycle(edges);
     if (cycle) {
-      report('C6', `순환이 있다 — ${cycle.join(' -> ')}`);
+      report('C6', `자원 순환이 있다 — ${cycle.join(' -> ')}`);
+    }
+
+    // 테크 트리 : 앞 테크 -> 뒤 테크. 여기 순환이 있으면 아무 테크도 못 연다.
+    const techEdges = new Map();
+    for (const tech of techs) {
+      for (const before of tech.앞테크) {
+        if (!techEdges.has(before)) {
+          techEdges.set(before, []);
+        }
+        techEdges.get(before).push(tech.이름);
+      }
+      if (!techEdges.has(tech.이름)) {
+        techEdges.set(tech.이름, []);
+      }
+    }
+    const techCycle = findCycle(techEdges);
+    if (techCycle) {
+      report('C6', `테크 순환이 있다 — ${techCycle.join(' -> ')}`);
     }
   }
 
@@ -279,6 +313,7 @@ function readCards(block) {
     이름: row['이름'],
     비용: row['비용'],
     종류: row['종류'],
+    희귀도: (row['희귀도'] || '').trim(),
     아키타입: parseList([`x: ${row['아키타입'] || ''}`], 'x'),
     키워드: parseList([`x: ${row['키워드'] || ''}`], 'x'),
     텍스트: row['텍스트'] || '',
@@ -289,10 +324,30 @@ function readCards(block) {
     키워드사전: parseDict(block.lines, '키워드') || {},
     아키타입: parseQuota(block.lines, '아키타입'),
     슬롯: parseQuota(block.lines, '슬롯'),
+    희귀도목록: parseList(block.lines, '희귀도'),
   };
 }
 
-function lintCards(deck, on, report) {
+const CARD_LIMITS = { 텍스트한도: 40, 사문화한도: 1 };
+
+// 한도는 숫자 하나로도, 희귀도별 표로도 적을 수 있다.
+// MTG 의 New World Order — 낮은 희귀도일수록 규칙이 짧아야 한다.
+function textLimit(limits, rarity) {
+  const table = limits.텍스트한도;
+  if (typeof table === 'number') {
+    return table;
+  }
+  if (table[rarity] !== undefined) {
+    return table[rarity];
+  }
+  if (table['기본'] !== undefined) {
+    return table['기본'];
+  }
+  return CARD_LIMITS.텍스트한도;
+}
+
+function lintCards(deck, on, report, options) {
+  const limits = Object.assign({}, CARD_LIMITS, options || {});
   const archetypeCount = {};
   for (const name of Object.keys(deck.아키타입)) {
     archetypeCount[name] = 0;
@@ -326,8 +381,25 @@ function lintCards(deck, on, report) {
     if (on.includes('C8') && card.아키타입.length === 0) {
       report('C8', `고아 카드 — '${card.이름}' (${card.id}) 은 어느 아키타입에도 안 낀다.`);
     }
-    if (on.includes('C12') && card.텍스트.length > 40) {
-      report('C12', `'${card.이름}' 의 규칙 텍스트가 ${card.텍스트.length}자다. 너무 길다.`);
+    if (on.includes('C1') && deck.희귀도목록.length > 0 && card.희귀도 !== '') {
+      if (!deck.희귀도목록.includes(card.희귀도)) {
+        report('C1', `카드 '${card.이름}' 의 희귀도 '${card.희귀도}' 가 사전에 없다.`);
+      }
+    }
+    if (on.includes('C1') && deck.희귀도목록.length > 0 && card.희귀도 === '') {
+      report('C1', `카드 '${card.이름}' 에 희귀도가 없다.`);
+    }
+
+    const limit = textLimit(limits, card.희귀도);
+    if (on.includes('C12') && card.텍스트.length > limit) {
+      let rarityNote = '';
+      if (card.희귀도 !== '') {
+        rarityNote = ` (${card.희귀도})`;
+      }
+      report(
+        'C12',
+        `'${card.이름}'${rarityNote} 의 규칙 텍스트가 ${card.텍스트.length}자다. 한도 ${limit}자를 넘는다.`
+      );
     }
   }
 
@@ -342,7 +414,7 @@ function lintCards(deck, on, report) {
 
   if (on.includes('C10')) {
     for (const [name, count] of Object.entries(keywordCount)) {
-      if (count > 1) {
+      if (count > limits.사문화한도) {
         continue;
       }
       report('C10', `키워드 '${name}' 을 쓰는 카드가 ${count}장이다. 규칙만 는다.`);
@@ -388,7 +460,7 @@ function chainToMermaid(chain) {
 
   chain.buildings.forEach((b, i) => {
     for (const need of b.넣는것) {
-      const key = `R_${need.이름}`;
+      const key = mermaidId('R_', need.이름);
       if (!seen.has(key)) {
         seen.add(key);
         lines.push(`    ${key}(["${need.이름}"])`);
@@ -396,7 +468,7 @@ function chainToMermaid(chain) {
       lines.push(`    ${key} -->|"${need.개수}"| B${i}`);
     }
     for (const out of b.나오는것) {
-      const key = `R_${out.이름}`;
+      const key = mermaidId('R_', out.이름);
       if (!seen.has(key)) {
         seen.add(key);
         lines.push(`    ${key}(["${out.이름}"])`);
@@ -420,31 +492,19 @@ function cardsToMermaid(deck, archetype) {
   return lines.join('\n');
 }
 
-function main() {
-  const args = process.argv.slice(2);
-  const file = args.find((a) => !a.startsWith('--'));
-  if (!file) {
-    console.log('쓰는 법 : node lint.js <파일.md> [--mermaid]');
-    process.exit(2);
-  }
-
+function lintFile(file, flags) {
   const profiles = loadProfiles();
   const text = fs.readFileSync(file, 'utf8');
-  const techBlocks = parseFenced(text, ['tech']);
-  const techs = readTech(techBlocks);
+  const techs = readTech(parseFenced(text, ['tech']));
   const blocks = parseFenced(text, ['chain', 'cards']);
-  if (blocks.length === 0) {
-    console.log('chain · cards 블록을 못 찾았다.');
-    process.exit(2);
-  }
-
   let bad = 0;
 
   for (const block of blocks) {
     const profileName = block.header.profile || block.tag;
-    const profile = profiles[profileName];
+    const profile = getProfile(profiles, profileName);
     if (!profile) {
-      console.log(`\n프로필 '${profileName}' 이 profiles.json 에 없다.`);
+      console.log(`
+프로필 '${profileName}' 이 profiles.json 에 없다.`);
       bad += 1;
       continue;
     }
@@ -453,12 +513,13 @@ function main() {
     const found = [];
     const report = (code, 글) => found.push({ code, 글 });
 
-    console.log(`\n[${block.header.name || block.tag}] 프로필 ${profileName} · 켠 검사 ${on.join(' ')}`);
+    console.log(`
+[${block.header.name || block.tag}] 프로필 ${profileName} · 켠 검사 ${on.join(' ')}`);
 
     if (block.tag === 'chain') {
       const chain = readChain(block);
       lintChain(chain, techs, on, report);
-      if (args.includes('--mermaid')) {
+      if (flags['--mermaid']) {
         console.log('```mermaid');
         console.log(chainToMermaid(chain));
         console.log('```');
@@ -467,8 +528,8 @@ function main() {
 
     if (block.tag === 'cards') {
       const deck = readCards(block);
-      lintCards(deck, on, report);
-      if (args.includes('--mermaid')) {
+      lintCards(deck, on, report, profile.한도);
+      if (flags['--mermaid']) {
         for (const name of Object.keys(deck.아키타입)) {
           console.log('```mermaid');
           console.log(cardsToMermaid(deck, name));
@@ -487,7 +548,31 @@ function main() {
     }
   }
 
-  console.log(`\n오류 ${bad}개`);
+  return { blocks: blocks.length, bad };
+}
+
+function main() {
+  const { files, flags } = parseArgs(process.argv.slice(2), []);
+  if (files.length === 0) {
+    console.log('쓰는 법 : node lint.js <파일.md ...> [--mermaid]');
+    process.exit(2);
+  }
+
+  let bad = 0;
+  let blocks = 0;
+  for (const file of files) {
+    const result = lintFile(file, flags);
+    bad += result.bad;
+    blocks += result.blocks;
+  }
+
+  if (blocks === 0) {
+    console.log('chain · cards 블록을 못 찾았다.');
+    process.exit(2);
+  }
+
+  console.log(`
+오류 ${bad}개`);
   if (bad > 0) {
     process.exit(1);
   }
@@ -497,4 +582,15 @@ if (require.main === module) {
   main();
 }
 
-module.exports = { readChain, readCards, lintChain, lintCards, chainToMermaid, cardsToMermaid, spread };
+module.exports = {
+  readChain,
+  readCards,
+  readTech,
+  lintChain,
+  lintCards,
+  chainToMermaid,
+  cardsToMermaid,
+  spread,
+  getProfile,
+  loadProfiles,
+};

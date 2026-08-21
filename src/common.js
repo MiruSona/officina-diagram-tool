@@ -1,4 +1,4 @@
-// 도면 도구 공통 조각. 코드펜스 뽑기와 마크다운 표 읽기.
+// 도면 도구 공통 조각. 코드펜스 뽑기, 마크다운 표 읽기, 명령줄 인자 읽기.
 
 // ```timeline name="강베기" total=34  ->  { name: '강베기', total: '34' }
 function parseHeader(line) {
@@ -99,7 +99,8 @@ function parseDict(lines, name) {
   return dict;
 }
 
-// "밀 2, 물 1" -> [{ 이름: '밀', 개수: 2 }, { 이름: '물', 개수: 1 }]
+// "밀 2, 철 광석 1" -> [{ 이름: '밀', 개수: 2 }, { 이름: '철 광석', 개수: 1 }]
+// 맨 뒤 토막이 숫자면 개수, 아니면 이름 전체다. 이름에 공백이 있어도 안 잘린다.
 function parseAmounts(text) {
   if (!text || text === '—' || text === '-') {
     return [];
@@ -107,20 +108,70 @@ function parseAmounts(text) {
 
   const out = [];
   for (const piece of text.split(',')) {
-    const parts = piece.trim().split(/\s+/);
-    if (parts[0] === '') {
+    const parts = piece.trim().split(/\s+/).filter((p) => p !== '');
+    if (parts.length === 0) {
       continue;
     }
+
     let count = 1;
+    let nameParts = parts;
     if (parts.length > 1) {
-      count = Number(parts[parts.length - 1]);
+      const tail = Number(parts[parts.length - 1]);
+      if (!Number.isNaN(tail)) {
+        count = tail;
+        nameParts = parts.slice(0, -1);
+      }
     }
-    if (Number.isNaN(count)) {
-      count = 1;
-    }
-    out.push({ 이름: parts[0], 개수: count });
+    out.push({ 이름: nameParts.join(' '), 개수: count });
   }
   return out;
 }
 
-module.exports = { parseHeader, parseFenced, parseTable, parseDict, parseAmounts };
+// Mermaid 노드 id 로 쓸 수 있게 다듬는다. 공백·괄호·빼기표가 들어가면 파서가 깨진다.
+function mermaidId(prefix, name) {
+  const safe = String(name).replace(/[^\w가-힣]/g, '_');
+  return `${prefix}${safe}`;
+}
+
+// HTML 로 뽑을 때 이름·라벨에 태그가 섞여도 안 깨지게 한다.
+function escapeHtml(text) {
+  return String(text)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+// 명령줄 인자를 파일 목록과 깃발로 나눈다. --html 은 뒤따르는 값을 하나 먹는다.
+function parseArgs(argv, valueFlags) {
+  const takesValue = valueFlags || ['--html'];
+  const files = [];
+  const flags = {};
+
+  for (let i = 0; i < argv.length; i += 1) {
+    const arg = argv[i];
+    if (!arg.startsWith('--')) {
+      files.push(arg);
+      continue;
+    }
+    if (takesValue.includes(arg)) {
+      flags[arg] = argv[i + 1];
+      i += 1;
+      continue;
+    }
+    flags[arg] = true;
+  }
+
+  return { files, flags };
+}
+
+module.exports = {
+  parseHeader,
+  parseFenced,
+  parseTable,
+  parseDict,
+  parseAmounts,
+  mermaidId,
+  escapeHtml,
+  parseArgs,
+};

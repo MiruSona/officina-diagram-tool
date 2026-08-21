@@ -4,7 +4,7 @@
 
 const fs = require('fs');
 const path = require('path');
-const { parseFenced, parseTable } = require('./common');
+const { parseFenced, parseTable, parseHeader, escapeHtml, parseArgs } = require('./common');
 
 const PROFILE_PATH = path.join(__dirname, 'profiles.json');
 
@@ -40,18 +40,6 @@ function pickProfileName(header, profiles) {
     }
   }
   return '기본';
-}
-
-// ```tilemap name="첫 구간" move=flat  ->  { name: '첫 구간', move: 'flat' }
-function parseHeader(line) {
-  const header = {};
-  const re = /(\w+)=("[^"]*"|\S+)/g;
-  let m = re.exec(line);
-  while (m) {
-    header[m[1]] = m[2].replace(/^"|"$/g, '');
-    m = re.exec(line);
-  }
-  return header;
 }
 
 // 범례: P=시작 #=벽  ->  { P: '시작', '#': '벽' }
@@ -145,21 +133,34 @@ function checkRowLength(grid, errors) {
 
 function checkKnownChars(grid, profile, legend, errors) {
   const known = profile.문자;
-  const seen = new Set();
+  const hasLegend = Object.keys(legend).length > 0;
+  const badChar = new Set();
+  const noLegend = new Set();
 
   grid.forEach((row, y) => {
     for (let x = 0; x < row.length; x += 1) {
       const ch = row[x];
-      if (known[ch] || seen.has(ch)) {
+      if (!known[ch] && !badChar.has(ch)) {
+        badChar.add(ch);
+        errors.push({
+          검사: '2',
+          글: `'${ch}' 는 문자표에 없다. (처음 나온 곳 ${x + 1}열 ${y + 1}행)`,
+        });
         continue;
       }
-      seen.add(ch);
-      errors.push({
-        검사: '2',
-        글: `'${ch}' 는 문자표에 없다. (처음 나온 곳 ${x + 1}열 ${y + 1}행)`,
-      });
+      if (hasLegend && known[ch] && !legend[ch] && !noLegend.has(ch)) {
+        noLegend.add(ch);
+        errors.push({
+          검사: '2',
+          글: `'${ch}' (${known[ch].뜻}) 를 쓰는데 범례에 없다. 범례는 그리드 바로 아래 적는다.`,
+        });
+      }
     }
   });
+
+  if (!hasLegend) {
+    errors.push({ 검사: '2', 글: '범례가 없다. 그리드 바로 아래에 적는다.' });
+  }
 
   for (const ch of Object.keys(legend)) {
     if (known[ch]) {
@@ -294,8 +295,14 @@ function checkReachable(grid, profile, start, errors) {
 }
 
 // 검사 4a. 점프로 못 올라가는 발판을 잡는다.
-// 모델은 단순하다 — 땅에서만 점프를 시작하고, 위로 h칸 · 공중에서 옆으로 dist칸까지 간다.
-// 더블 점프·대시·벽타기는 아직 안 본다.
+//
+// 점프 곡선은 `h`(최고 높이) · `x_h`(정점까지 거리) 두 값이 정한다 (설계 3-2).
+// 최고 높이는 가로로 x_h 까지만 유지되고, 그 뒤로는 포물선을 따라 떨어진다.
+//   가로 m 칸 갔을 때 올라가 있을 수 있는 최대 높이
+//     m <= x_h  ->  h        (달리는 속도를 줄이면 정점이 앞으로 온다)
+//     m >  x_h  ->  h * (1 - ((m - x_h) / x_h)^2)
+// 내려오는 중에는 높이 한도를 안 본다. 대신 가로 예산은 살아 있다 — 떨어진 칸 수만큼만 늘어난다.
+// 더블 점프·대시·벽타기는 아직 안 본다. 공중에서 방향을 되돌리면 실제보다 빡빡하게 잰다.
 function checkJump(grid, profile, start, baseline, errors) {
   if (!start) {
     return null;
@@ -304,9 +311,16 @@ function checkJump(grid, profile, start, baseline, errors) {
   const chars = profile.문자;
   const h = baseline.점프높이;
   const dist = baseline.점프거리;
+  let xh = baseline.정점거리;
+  if (!(xh > 0)) {
+    xh = dist / 2;
+  }
+
+  const width = Math.max(...grid.map((row) => row.length), 1);
+  const height = grid.length;
 
   const at = (x, y) => {
-    if (y < 0 || y >= grid.length) {
+    if (y < 0 || y >= height) {
       return null;
     }
     if (x < 0 || x >= grid[y].length) {
@@ -316,10 +330,7 @@ function checkJump(grid, profile, start, baseline, errors) {
   };
   const passable = (x, y) => {
     const spec = at(x, y);
-    if (!spec) {
-      return false;
-    }
-    return spec.지나감;
+    return Boolean(spec) && Boolean(spec.지나감);
   };
   const solid = (x, y) => {
     const spec = at(x, y);
@@ -328,56 +339,98 @@ function checkJump(grid, profile, start, baseline, errors) {
     }
     return !spec.지나감;
   };
-  const deadly = (x, y) => grid[y][x] === '^';
-  const ladder = (x, y) => grid[y][x] === '~';
+  const deadly = (x, y) => Boolean((at(x, y) || {}).죽음) || grid[y][x] === '^';
+  const ladder = (x, y) => Boolean((at(x, y) || {}).사다리) || grid[y][x] === '~';
   const onGround = (x, y) => solid(x, y + 1) || ladder(x, y);
 
-  // 상태 = 칸 + 남은 점프 높이 + 남은 공중 가로 이동
+  // 가로로 m 칸 갔을 때 올라가 있을 수 있는 최대 높이
+  const arcHeight = (m) => {
+    if (m <= xh) {
+      return h;
+    }
+    const t = (m - xh) / xh;
+    return h * (1 - t * t);
+  };
+  // 가로 예산은 낙하 중에도 살아 있다. 떨어진 칸 수만큼만 더 간다 (오래 떠 있으니 더 흐른다).
+  // 이게 없으면 아무리 넓은 구덩이도 같은 높이로 건너간다고 본다.
+  const canBeAt = (risen, moved) => {
+    const fallen = Math.max(0, -risen);
+    if (moved > dist + fallen) {
+      return false;
+    }
+    if (risen <= 0) {
+      return true;
+    }
+    return risen <= arcHeight(moved) + 1e-9;
+  };
+
+  // 상태 = 칸 + 발사 높이에서 올라간 칸 수 + 공중에서 간 가로 칸 수 + 아직 오르는 중인가
+  const RISEN_LOW = -height;
+  const MOVED_MAX = width;
+  const encode = (s) => {
+    const risen = Math.max(RISEN_LOW, Math.min(h, s.risen)) - RISEN_LOW;
+    const moved = Math.min(MOVED_MAX, s.moved);
+    return ((((s.y * width + s.x) * (h - RISEN_LOW + 1) + risen) * (MOVED_MAX + 1)) + moved) * 2 +
+      (s.asc ? 1 : 0);
+  };
+
   const seen = new Set();
   const cells = new Set();
-  const stateKey = (s) => `${s.x},${s.y},${s.up},${s.air}`;
-  const queue = [{ x: start.x, y: start.y, up: h, air: dist }];
+  const queue = [{ x: start.x, y: start.y, risen: 0, moved: 0, asc: true }];
+  let head = 0;
 
-  while (queue.length > 0) {
-    const cur = queue.shift();
-    if (seen.has(stateKey(cur))) {
+  const push = (x, y, risen, moved, asc) => {
+    if (!passable(x, y)) {
+      return;
+    }
+    if (!canBeAt(risen, moved)) {
+      return;
+    }
+    queue.push({ x, y, risen, moved, asc });
+  };
+
+  while (head < queue.length) {
+    const cur = queue[head];
+    head += 1;
+    const id = encode(cur);
+    if (seen.has(id)) {
       continue;
     }
-    seen.add(stateKey(cur));
+    seen.add(id);
     cells.add(`${cur.x},${cur.y}`);
 
     if (deadly(cur.x, cur.y)) {
       continue;
     }
 
-    let up = cur.up;
-    let air = cur.air;
-    if (onGround(cur.x, cur.y)) {
-      up = h;
-      air = dist;
+    const grounded = onGround(cur.x, cur.y);
+    let risen = cur.risen;
+    let moved = cur.moved;
+    let asc = cur.asc;
+    if (grounded) {
+      risen = 0;
+      moved = 0;
+      asc = true;
     }
 
-    if (!onGround(cur.x, cur.y) && passable(cur.x, cur.y + 1)) {
-      queue.push({ x: cur.x, y: cur.y + 1, up: 0, air });
+    if (asc) {
+      push(cur.x, cur.y - 1, risen + 1, moved, true);
     }
-    if (ladder(cur.x, cur.y) && passable(cur.x, cur.y + 1)) {
-      queue.push({ x: cur.x, y: cur.y + 1, up: h, air: dist });
+    if (ladder(cur.x, cur.y)) {
+      push(cur.x, cur.y - 1, 0, 0, true);
+      push(cur.x, cur.y + 1, 0, 0, true);
     }
-    if (up > 0 && passable(cur.x, cur.y - 1)) {
-      queue.push({ x: cur.x, y: cur.y - 1, up: up - 1, air });
+    if (!grounded) {
+      push(cur.x, cur.y + 1, risen - 1, moved, false);
     }
 
     for (const dx of [-1, 1]) {
-      if (!passable(cur.x + dx, cur.y)) {
+      if (grounded) {
+        const landed = onGround(cur.x + dx, cur.y);
+        push(cur.x + dx, cur.y, 0, 0, landed);
         continue;
       }
-      if (onGround(cur.x, cur.y)) {
-        queue.push({ x: cur.x + dx, y: cur.y, up, air });
-        continue;
-      }
-      if (air > 0) {
-        queue.push({ x: cur.x + dx, y: cur.y, up, air: air - 1 });
-      }
+      push(cur.x + dx, cur.y, risen, moved + 1, asc);
     }
   }
 
@@ -400,11 +453,11 @@ function checkJump(grid, profile, start, baseline, errors) {
     if (stuck.length > shown.length) {
       글 += ' …';
     }
-    글 += ` (점프 높이 ${h} · 거리 ${dist} 기준)`;
+    글 += ` (점프 높이 ${h} · 거리 ${dist} · 정점까지 ${xh} 기준)`;
     errors.push({ 검사: '4a', 글 });
   }
 
-  for (const ch of ['C', 'S', 'E']) {
+  for (const ch of ['C', 'S', 'E', 'X']) {
     for (const spot of findChar(grid, ch)) {
       if (cells.has(`${spot.x},${spot.y}`)) {
         continue;
@@ -437,42 +490,69 @@ function validate(block, profiles, baseline) {
     checkReachable(block.grid, profile, start, errors);
   }
   if (on.includes('4a')) {
+    if (baseline.기본값) {
+      errors.push({
+        검사: '4a',
+        글: '이동 기준선(baseline) 표가 없어서 기본값(높이 4 · 거리 5 · 정점 2.5)으로 쟀다.',
+      });
+    }
+    if (baseline.빠진값 && baseline.빠진값.length > 0) {
+      errors.push({
+        검사: '4a',
+        글: `기준선 표에 ${baseline.빠진값.join(' · ')} 가 없어서 기본값으로 쟀다.`,
+      });
+    }
     checkJump(block.grid, profile, start, baseline, errors);
   }
 
   return { profileName: name, profile, errors };
 }
 
-const DEFAULT_BASELINE = { 점프높이: 4, 점프거리: 5 };
+const DEFAULT_BASELINE = { 점프높이: 4, 점프거리: 5, 정점거리: 2.5 };
 
-// baseline 표에서 점프 값을 뽑는다. 표가 없으면 기본값을 쓴다.
-function loadBaseline(text, wanted) {
+const BASELINE_LABEL = {
+  '점프 최고 높이': '점프높이',
+  '점프 최대 거리': '점프거리',
+  '정점까지 거리': '정점거리',
+};
+
+// baseline 표에서 점프 값을 뽑는다.
+// 고르는 순서 : 머리말 `baseline` 이름 -> 같은 이동 축(move=gravity) 표 -> 첫 표.
+// 표가 하나도 없으면 기본값을 쓰고 그렇다고 알린다. 조용히 짐작하면 안 된다.
+function loadBaseline(text, wanted, move) {
   const blocks = parseFenced(text, ['baseline']);
   if (blocks.length === 0) {
-    return Object.assign({}, DEFAULT_BASELINE);
+    return Object.assign({}, DEFAULT_BASELINE, { 기본값: true });
   }
 
-  let block = blocks[0];
+  let block = null;
   if (wanted) {
-    const found = blocks.find((b) => b.header.name === wanted);
-    if (found) {
-      block = found;
-    }
+    block = blocks.find((b) => b.header.name === wanted) || null;
+  }
+  if (!block && move) {
+    block = blocks.find((b) => b.header.move === move) || null;
+  }
+  if (!block) {
+    block = blocks[0];
   }
 
-  const baseline = Object.assign({}, DEFAULT_BASELINE);
+  const baseline = Object.assign({}, DEFAULT_BASELINE, { 기본값: false, 빠진값: [] });
+  const read = new Set();
   for (const row of parseTable(block.lines).rows) {
-    const label = row['항목'];
+    const field = BASELINE_LABEL[row['항목']];
     const value = Number(row['값']);
-    if (Number.isNaN(value)) {
+    if (!field || Number.isNaN(value)) {
       continue;
     }
-    if (label === '점프 최고 높이') {
-      baseline.점프높이 = value;
+    baseline[field] = value;
+    read.add(field);
+  }
+
+  for (const field of Object.keys(BASELINE_LABEL)) {
+    if (read.has(BASELINE_LABEL[field])) {
+      continue;
     }
-    if (label === '점프 최대 거리') {
-      baseline.점프거리 = value;
-    }
+    baseline.빠진값.push(field);
   }
   return baseline;
 }
@@ -494,19 +574,7 @@ function renderPreview(grid, profile) {
   return rows.join('\n');
 }
 
-const TILE_COLOR = {
-  '#': '#4a4a52',
-  '.': '#15161a',
-  P: '#4ea1ff',
-  E: '#ff5a5a',
-  C: '#ffcc4d',
-  S: '#7de08a',
-  K: '#ffcc4d',
-  '+': '#b07a3a',
-  X: '#7de08a',
-  '^': '#ff5a5a',
-  '~': '#b07a3a',
-};
+const UNKNOWN_COLOR = '#6b6d77';
 
 function renderHtml(blocks, results) {
   const parts = [];
@@ -527,22 +595,27 @@ function renderHtml(blocks, results) {
   blocks.forEach((block, i) => {
     const result = results[i];
     const width = block.grid[0] ? block.grid[0].length : 0;
-    parts.push(`<h2>${block.header.name || `도면 ${i + 1}`}</h2>`);
+    parts.push(`<h2>${escapeHtml(block.header.name || `도면 ${i + 1}`)}</h2>`);
     parts.push(
-      `<div class="meta">프로필 ${result.profileName} · 이동 ${result.profile.이동} · ` +
-        `${width}×${block.grid.length}</div>`
+      `<div class="meta">프로필 ${escapeHtml(result.profileName)} · ` +
+        `이동 ${escapeHtml(result.profile.이동)} · ${width}×${block.grid.length}</div>`
     );
 
     parts.push(`<div class="grid" style="grid-template-columns:repeat(${width},18px)">`);
     for (const row of block.grid) {
       for (let x = 0; x < row.length; x += 1) {
         const ch = row[x];
-        const color = TILE_COLOR[ch] || '#6b6d77';
+        const spec = result.profile.문자[ch] || {};
+        const color = spec.색 || UNKNOWN_COLOR;
         let label = ch;
-        if (ch === '.' || ch === '#') {
+        if (spec.지나감 === true && spec.뜻 && /빈칸|허공|바닥/.test(spec.뜻)) {
           label = '';
         }
-        parts.push(`<div class="cell" style="background:${color}">${label}</div>`);
+        if (spec.지나감 === false && !spec.문) {
+          label = '';
+        }
+        const title = spec.뜻 ? ` title="${escapeHtml(spec.뜻)}"` : '';
+        parts.push(`<div class="cell" style="background:${color}"${title}>${escapeHtml(label)}</div>`);
       }
     }
     parts.push('</div>');
@@ -553,7 +626,7 @@ function renderHtml(blocks, results) {
     }
     parts.push('<ul class="bad">');
     for (const e of result.errors) {
-      parts.push(`<li>검사 ${e.검사} — ${e.글}</li>`);
+      parts.push(`<li>검사 ${escapeHtml(e.검사)} — ${escapeHtml(e.글)}</li>`);
     }
     parts.push('</ul>');
   });
@@ -561,32 +634,23 @@ function renderHtml(blocks, results) {
   return parts.join('\n');
 }
 
-function main() {
-  const args = process.argv.slice(2);
-  const file = args.find((a) => !a.startsWith('--') && !a.endsWith('.html'));
-  if (!file) {
-    console.log('쓰는 법 : node tilemap.js <파일.md> [--html 결과.html] [--preview]');
-    process.exit(2);
-  }
-
+function checkFile(file, flags) {
   const profiles = loadProfiles();
   const text = fs.readFileSync(file, 'utf8');
   const blocks = parseBlocks(text);
-  if (blocks.length === 0) {
-    console.log('tilemap 블록을 못 찾았다.');
-    process.exit(2);
-  }
-
-  const results = blocks.map((b) => validate(b, profiles, loadBaseline(text, b.header.baseline)));
+  const results = blocks.map((b) =>
+    validate(b, profiles, loadBaseline(text, b.header.baseline, b.header.move))
+  );
   let bad = 0;
 
   blocks.forEach((block, i) => {
     const result = results[i];
     console.log(
-      `\n[${block.header.name || `도면 ${i + 1}`}] 프로필 ${result.profileName} · ${block.grid.length}줄`
+      `
+[${block.header.name || `도면 ${i + 1}`}] 프로필 ${result.profileName} · ${block.grid.length}줄`
     );
 
-    if (args.includes('--preview')) {
+    if (flags['--preview']) {
       console.log(renderPreview(block.grid, result.profile));
     }
 
@@ -600,13 +664,40 @@ function main() {
     }
   });
 
-  const htmlAt = args.indexOf('--html');
-  if (htmlAt !== -1 && args[htmlAt + 1]) {
-    fs.writeFileSync(args[htmlAt + 1], renderHtml(blocks, results), 'utf8');
-    console.log(`\nHTML 저장 : ${args[htmlAt + 1]}`);
+  return { blocks, results, bad };
+}
+
+function main() {
+  const { files, flags } = parseArgs(process.argv.slice(2));
+  if (files.length === 0) {
+    console.log('쓰는 법 : node tilemap.js <파일.md ...> [--html 결과.html] [--preview]');
+    process.exit(2);
   }
 
-  console.log(`\n오류 ${bad}개`);
+  let bad = 0;
+  let allBlocks = [];
+  let allResults = [];
+
+  for (const file of files) {
+    const out = checkFile(file, flags);
+    bad += out.bad;
+    allBlocks = allBlocks.concat(out.blocks);
+    allResults = allResults.concat(out.results);
+  }
+
+  if (allBlocks.length === 0) {
+    console.log('tilemap 블록을 못 찾았다.');
+    process.exit(2);
+  }
+
+  if (flags['--html']) {
+    fs.writeFileSync(flags['--html'], renderHtml(allBlocks, allResults), 'utf8');
+    console.log(`
+HTML 저장 : ${flags['--html']}`);
+  }
+
+  console.log(`
+오류 ${bad}개`);
   if (bad > 0) {
     process.exit(1);
   }
