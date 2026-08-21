@@ -4,7 +4,15 @@
 
 const fs = require('fs');
 const path = require('path');
-const { parseFenced, parseTable, parseDict, parseAmounts, mermaidId, parseArgs } = require('./common');
+const {
+  parseFenced,
+  parseTable,
+  parseDict,
+  parseAmounts,
+  mermaidId,
+  parseArgs,
+  isExample,
+} = require('./common');
 
 const PROFILE_PATH = path.join(__dirname, 'profiles.json');
 
@@ -495,11 +503,20 @@ function cardsToMermaid(deck, archetype) {
 function lintFile(file, flags) {
   const profiles = loadProfiles();
   const text = fs.readFileSync(file, 'utf8');
-  const techs = readTech(parseFenced(text, ['tech']));
+  // 예시 테크 블록은 온전한 트리가 아니라 사슬 검사의 밑감으로도 안 쓴다.
+  const techs = readTech(parseFenced(text, ['tech']).filter((b) => !isExample(b.header)));
   const blocks = parseFenced(text, ['chain', 'cards']);
   let bad = 0;
+  let 예시수 = 0;
 
   for (const block of blocks) {
+    if (isExample(block.header)) {
+      예시수 += 1;
+      console.log(`
+[${block.header.name || block.tag}] 예시 블록이라 검사를 건너뛴다`);
+      continue;
+    }
+
     const profileName = block.header.profile || block.tag;
     const profile = getProfile(profiles, profileName);
     if (!profile) {
@@ -548,7 +565,7 @@ function lintFile(file, flags) {
     }
   }
 
-  return { blocks: blocks.length, bad };
+  return { blocks: blocks.length, bad, 예시수 };
 }
 
 function main() {
@@ -560,10 +577,12 @@ function main() {
 
   let bad = 0;
   let blocks = 0;
+  let 예시수 = 0;
   for (const file of files) {
     const result = lintFile(file, flags);
     bad += result.bad;
     blocks += result.blocks;
+    예시수 += result.예시수;
   }
 
   if (blocks === 0) {
@@ -571,8 +590,12 @@ function main() {
     process.exit(2);
   }
 
+  let 꼬리 = '';
+  if (예시수 > 0) {
+    꼬리 = ` · 예시 ${예시수}개 건너뜀`;
+  }
   console.log(`
-오류 ${bad}개`);
+오류 ${bad}개${꼬리}`);
   if (bad > 0) {
     process.exit(1);
   }

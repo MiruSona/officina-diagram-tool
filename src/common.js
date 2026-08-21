@@ -12,6 +12,17 @@ function parseHeader(line) {
   return header;
 }
 
+// 머리말에 `예시=참` 이 붙은 블록은 검사를 안 돌린다.
+// 가이드 문서의 "기호는 이렇게 씁니다" 조각은 온전한 도면이 아니라서 그냥 돌리면 오류가 뜬다.
+// 그리기는 그대로 하고 검사만 건너뛴다.
+function isExample(header) {
+  const value = header['예시'];
+  if (value === undefined) {
+    return false;
+  }
+  return value === '참' || value === 'true' || value === '1';
+}
+
 // 마크다운에서 지정한 태그의 코드펜스를 뽑는다.
 // 사전(범례·시작자원 같은 것)은 펜스 바로 아래 줄에 적으므로 빈 줄 전까지 같이 담는다.
 function parseFenced(text, tags) {
@@ -167,6 +178,7 @@ function parseArgs(argv, valueFlags) {
 
 module.exports = {
   parseHeader,
+  isExample,
   parseFenced,
   parseTable,
   parseDict,

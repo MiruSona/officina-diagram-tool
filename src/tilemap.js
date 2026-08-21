@@ -4,7 +4,7 @@
 
 const fs = require('fs');
 const path = require('path');
-const { parseFenced, parseTable, parseHeader, escapeHtml, parseArgs } = require('./common');
+const { parseFenced, parseTable, parseHeader, escapeHtml, parseArgs, isExample } = require('./common');
 
 const PROFILE_PATH = path.join(__dirname, 'profiles.json');
 
@@ -142,10 +142,12 @@ function checkKnownChars(grid, profile, legend, errors) {
       const ch = row[x];
       if (!known[ch] && !badChar.has(ch)) {
         badChar.add(ch);
-        errors.push({
-          검사: '2',
-          글: `'${ch}' 는 문자표에 없다. (처음 나온 곳 ${x + 1}열 ${y + 1}행)`,
-        });
+        // 공백은 눈에 안 보여서 "문자표에 없다" 만 보면 어디가 틀렸는지 못 찾는다.
+        let 글 = `'${ch}' 는 문자표에 없다. (처음 나온 곳 ${x + 1}열 ${y + 1}행)`;
+        if (ch === ' ' || ch === '\t' || ch === '\r') {
+          글 = `보이지 않는 문자(공백·탭)가 ${x + 1}열 ${y + 1}행 에 있다. 줄 끝 공백을 지운다.`;
+        }
+        errors.push({ 검사: '2', 글 });
         continue;
       }
       if (hasLegend && known[ch] && !legend[ch] && !noLegend.has(ch)) {
@@ -195,18 +197,16 @@ function checkStart(grid, errors) {
   return spots[0];
 }
 
-// 검사 4b. 시작점에서 사방으로 번져 나가(flood fill) 닿는 칸을 표시한다.
-// 문에 막히면 그때까지 주운 열쇠 수만큼만 연다. 열쇠가 문 뒤에 있으면 여기서 걸린다.
-function checkReachable(grid, profile, start, errors) {
-  if (!start) {
-    return null;
-  }
-
-  const chars = profile.문자;
+// 격자를 걸어 다니는 일꾼. 검사 4b 와 검사 10 이 같이 쓴다.
+// 닿은 칸(seen) · 못 연 문(doors) · 주운 열쇠 칸(keys) · 이미 연 문(opened) 을 들고 다닌다.
+// `blocked` 에 넣은 자리는 벽처럼 본다 — 검사 10 이 아직 안 만난 뒤 비트를 막을 때 쓴다.
+// **열쇠와 연 문은 `reset()` 을 해도 안 지워진다.** 검사 10 이 단계를 넘어가며 들고 다녀야 한다.
+function makeWalker(grid, chars) {
   const seen = new Set();
   const doors = new Set();
-  let keysFound = 0;
-  let keysUsed = 0;
+  const opened = new Set();
+  const keys = new Set();
+  const blocked = new Set();
 
   const key = (x, y) => `${x},${y}`;
   const at = (x, y) => {
@@ -227,10 +227,13 @@ function checkReachable(grid, profile, start, errors) {
       if (!spec || seen.has(key(cur.x, cur.y))) {
         continue;
       }
+      if (blocked.has(key(cur.x, cur.y))) {
+        continue;
+      }
       if (!spec.지나감 && !spec.문) {
         continue;
       }
-      if (spec.문 && !cur.opened) {
+      if (spec.문 && !opened.has(key(cur.x, cur.y))) {
         doors.add(key(cur.x, cur.y));
         continue;
       }
@@ -238,7 +241,7 @@ function checkReachable(grid, profile, start, errors) {
       seen.add(key(cur.x, cur.y));
       doors.delete(key(cur.x, cur.y));
       if (spec.열쇠) {
-        keysFound += 1;
+        keys.add(key(cur.x, cur.y));
       }
 
       queue.push({ x: cur.x + 1, y: cur.y });
@@ -248,14 +251,42 @@ function checkReachable(grid, profile, start, errors) {
     }
   };
 
-  flood(start);
+  // 주운 열쇠가 남아 있는 동안 못 연 문을 하나씩 연다. 먼저 만난 문부터 연다.
+  const openDoors = () => {
+    while (doors.size > 0 && keys.size - opened.size > 0) {
+      const spot = doors.values().next().value;
+      const parts = spot.split(',');
+      opened.add(spot);
+      doors.delete(spot);
+      flood({ x: Number(parts[0]), y: Number(parts[1]) });
+    }
+  };
 
-  while (doors.size > 0 && keysFound - keysUsed > 0) {
-    const spot = doors.values().next().value;
-    const parts = spot.split(',');
-    keysUsed += 1;
-    flood({ x: Number(parts[0]), y: Number(parts[1]), opened: true });
+  // 닿은 칸만 지운다. 열쇠와 연 문은 남는다.
+  const reset = () => {
+    seen.clear();
+    doors.clear();
+  };
+
+  return { seen, doors, opened, keys, blocked, key, flood, openDoors, reset };
+}
+
+// 검사 4b. 시작점에서 사방으로 번져 나가(flood fill) 닿는 칸을 표시한다.
+// 문에 막히면 그때까지 주운 열쇠 수만큼만 연다. 열쇠가 문 뒤에 있으면 여기서 걸린다.
+function checkReachable(grid, profile, start, errors) {
+  if (!start) {
+    return null;
   }
+
+  const chars = profile.문자;
+  const walker = makeWalker(grid, chars);
+  const { seen, doors, key } = walker;
+
+  walker.flood(start);
+  walker.openDoors();
+
+  const keysFound = walker.keys.size;
+  const keysUsed = walker.opened.size;
 
   const stuck = [];
   grid.forEach((row, y) => {
@@ -292,6 +323,90 @@ function checkReachable(grid, profile, start, errors) {
   }
 
   return seen;
+}
+
+// 검사 10. 크리티컬 패스 — 비트 번호를 순서대로 갈 수 있는가.
+//
+// 4b 는 "어디든 갈 수 있나" 만 본다. 이건 "의도한 순서로 갈 수 있나" 를 본다.
+// 단계마다 **아직 안 만난 뒤 비트를 벽으로 놓고** 번져 나간다.
+// 그래야 "3번을 지나야만 2번에 갈 수 있다" 는 번호와 지리가 안 맞는 것이 잡힌다.
+// 주운 열쇠와 연 문은 단계를 넘어가도 그대로 들고 간다.
+function checkCriticalPath(grid, profile, start, errors) {
+  const chars = profile.문자;
+  const spots = new Map();
+
+  grid.forEach((row, y) => {
+    for (let x = 0; x < row.length; x += 1) {
+      const spec = chars[row[x]];
+      if (!spec || !spec.비트) {
+        continue;
+      }
+      if (!spots.has(spec.비트)) {
+        spots.set(spec.비트, []);
+      }
+      spots.get(spec.비트).push({ x, y });
+    }
+  });
+
+  if (spots.size === 0) {
+    return;
+  }
+
+  const numbers = Array.from(spots.keys()).sort((a, b) => a - b);
+  const biggest = numbers[numbers.length - 1];
+
+  for (const n of numbers) {
+    if (spots.get(n).length === 1) {
+      continue;
+    }
+    errors.push({ 검사: '10', 글: `번호가 겹쳤다 — 비트 ${n} : ${spots.get(n).length}칸. 한 칸이어야 한다.` });
+  }
+
+  const missing = [];
+  for (let n = 1; n <= biggest; n += 1) {
+    if (spots.has(n)) {
+      continue;
+    }
+    missing.push(n);
+  }
+  if (missing.length > 0) {
+    errors.push({ 검사: '10', 글: `빠진 비트 번호 : ${missing.join(' · ')} — 1부터 이어져야 한다.` });
+  }
+
+  if (!start) {
+    return;
+  }
+
+  const walker = makeWalker(grid, chars);
+  let here = start;
+  let 앞자리 = '시작점 P';
+
+  for (const n of numbers) {
+    walker.reset();
+    walker.blocked.clear();
+    for (const later of numbers) {
+      if (later <= n) {
+        continue;
+      }
+      for (const spot of spots.get(later)) {
+        walker.blocked.add(walker.key(spot.x, spot.y));
+      }
+    }
+
+    walker.flood(here);
+    walker.openDoors();
+
+    const goal = spots.get(n)[0];
+    if (!walker.seen.has(walker.key(goal.x, goal.y))) {
+      errors.push({
+        검사: '10',
+        글: `${앞자리} 에서 비트 ${n} (${goal.x + 1}열 ${goal.y + 1}행) 으로 못 간다. 번호 순서와 지리가 안 맞는다.`,
+      });
+      return;
+    }
+    here = goal;
+    앞자리 = `비트 ${n}`;
+  }
 }
 
 // 검사 4a. 점프로 못 올라가는 발판을 잡는다.
@@ -475,6 +590,11 @@ function validate(block, profiles, baseline) {
   const on = profile.검사 || [];
   const errors = [];
 
+  // `예시=참` 인 블록은 온전한 도면이 아니라 기호를 보여주는 조각이다. 그리기만 하고 검사는 건너뛴다.
+  if (isExample(block.header)) {
+    return { profileName: name, profile, errors, 예시: true };
+  }
+
   if (on.includes('1')) {
     checkRowLength(block.grid, errors);
   }
@@ -488,6 +608,9 @@ function validate(block, profiles, baseline) {
   }
   if (on.includes('4b')) {
     checkReachable(block.grid, profile, start, errors);
+  }
+  if (on.includes('10')) {
+    checkCriticalPath(block.grid, profile, start, errors);
   }
   if (on.includes('4a')) {
     if (baseline.기본값) {
@@ -642,6 +765,7 @@ function checkFile(file, flags) {
     validate(b, profiles, loadBaseline(text, b.header.baseline, b.header.move))
   );
   let bad = 0;
+  let 예시수 = 0;
 
   blocks.forEach((block, i) => {
     const result = results[i];
@@ -654,6 +778,12 @@ function checkFile(file, flags) {
       console.log(renderPreview(block.grid, result.profile));
     }
 
+    if (result.예시) {
+      예시수 += 1;
+      console.log('  예시 블록이라 검사를 건너뛴다');
+      return;
+    }
+
     if (result.errors.length === 0) {
       console.log('  문제 없음');
       return;
@@ -664,7 +794,7 @@ function checkFile(file, flags) {
     }
   });
 
-  return { blocks, results, bad };
+  return { blocks, results, bad, 예시수 };
 }
 
 function main() {
@@ -675,12 +805,14 @@ function main() {
   }
 
   let bad = 0;
+  let 예시수 = 0;
   let allBlocks = [];
   let allResults = [];
 
   for (const file of files) {
     const out = checkFile(file, flags);
     bad += out.bad;
+    예시수 += out.예시수;
     allBlocks = allBlocks.concat(out.blocks);
     allResults = allResults.concat(out.results);
   }
@@ -696,8 +828,12 @@ function main() {
 HTML 저장 : ${flags['--html']}`);
   }
 
+  let 꼬리 = '';
+  if (예시수 > 0) {
+    꼬리 = ` · 예시 ${예시수}개 건너뜀`;
+  }
   console.log(`
-오류 ${bad}개`);
+오류 ${bad}개${꼬리}`);
   if (bad > 0) {
     process.exit(1);
   }
@@ -707,4 +843,12 @@ if (require.main === module) {
   main();
 }
 
-module.exports = { parseBlocks, validate, renderHtml, renderPreview, loadProfiles, getProfile, loadBaseline };
+module.exports = {
+  parseBlocks,
+  validate,
+  renderHtml,
+  renderPreview,
+  loadProfiles,
+  getProfile,
+  loadBaseline,
+};

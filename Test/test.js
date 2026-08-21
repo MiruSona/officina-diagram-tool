@@ -8,6 +8,7 @@ const path = require('path');
 const tilemap = require('../Tools/Draw/tilemap');
 const timeline = require('../Tools/Draw/timeline');
 const lint = require('../Tools/Draw/lint');
+const all = require('../Tools/Draw/all');
 const { parseFenced, parseAmounts, mermaidId } = require('../Tools/Draw/common');
 
 const HERE = path.join(__dirname, 'Draw');
@@ -69,7 +70,11 @@ function 시간축검사(name) {
 
 // ---------------------------------------------------------------- 엔진 A
 
-const 정상도면 = [...타일맵검사('견본.md'), ...타일맵검사('견본-중력.md')];
+const 정상도면 = [
+  ...타일맵검사('견본.md'),
+  ...타일맵검사('견본-중력.md'),
+  ...타일맵검사('견본-크리티컬패스.md'),
+];
 for (const block of 정상도면) {
   확인(`A-정상 [${block.name}] 은 조용해야 한다`, block.codes.length === 0, block.글.join(' / '));
 }
@@ -129,6 +134,31 @@ function 점프도면(그리드) {
     '###############',
   ]) > 0
 );
+
+// ---- 검사 10. 크리티컬 패스 ----
+
+const 패스시험 = 타일맵검사('시험견본-크리티컬패스.md');
+const 패스별 = {};
+for (const block of 패스시험) {
+  패스별[block.name] = block.codes;
+}
+
+확인('A10 열쇠가 3번 뒤 — 순서 뒤집힘', (패스별['시험10-1 열쇠 순서 뒤집힘'] || []).includes('10'));
+확인(
+  'A10 열쇠 순서 뒤집힘은 4b 가 아니라 10 이 잡는다',
+  !(패스별['시험10-1 열쇠 순서 뒤집힘'] || []).includes('4b'),
+  (패스시험.find((b) => b.name === '시험10-1 열쇠 순서 뒤집힘') || {}).글
+);
+확인('A10 지리가 거꾸로', (패스별['시험10-2 지리가 거꾸로'] || []).includes('10'));
+확인('A10 번호 빠짐', (패스별['시험10-3 번호 빠짐'] || []).includes('10'));
+확인('A10 번호 겹침', (패스별['시험10-4 번호 겹침'] || []).includes('10'));
+
+// 온전한 크리티컬 패스를 안 잡는 것이 진짜 시험이다.
+const 패스정상 = 타일맵검사('견본-크리티컬패스.md');
+for (const block of 패스정상) {
+  확인(`A10-정상 [${block.name}] 은 조용해야 한다`, block.codes.length === 0, block.글.join(' / '));
+}
+확인('A10 비트가 없으면 조용히 넘어간다', (패스정상.find((b) => b.name === '비트 없음') || {}).codes.length === 0);
 
 // ---------------------------------------------------------------- 엔진 B
 
@@ -235,6 +265,158 @@ lint.lintChain(
   (code, 글) => 테크순환.push(`${code} ${글}`)
 );
 확인('C6 테크 앞뒤 순환', 테크순환.some((m) => m.includes('테크 순환')));
+
+// ---- 검사 11. 쉼터 없음 ----
+
+const 쉼터 = 시간축검사('시험견본-페이싱.md');
+const 쉼터별 = {};
+for (const r of 쉼터) {
+  쉼터별[r.name] = r.errors;
+}
+const 쉼터알림 = (name) => (쉼터별[name] || []).filter((e) => e.includes('쉼터간격'));
+
+확인('B11 5 4 5 4 5 를 쉼터 없음으로 잡는다', 쉼터알림('시험11-1 쉼터 없음').length === 1);
+확인(
+  'B11 한 줄기에 한 번만 알린다',
+  (쉼터별['시험11-1 쉼터 없음'] || []).length === 1,
+  (쉼터별['시험11-1 쉼터 없음'] || []).join(' / ')
+);
+확인(
+  'B11 5 4 1 5 4 는 안 잡는다',
+  (쉼터별['시험11-2 쉼터 있음'] || []).length === 0,
+  (쉼터별['시험11-2 쉼터 있음'] || []).join(' / ')
+);
+확인(
+  'B11 쉼터간격 머리말로 한도를 늘린다',
+  (쉼터별['시험11-3 한도 늘림'] || []).length === 0,
+  (쉼터별['시험11-3 한도 늘림'] || []).join(' / ')
+);
+확인(
+  'B11 은 같은 강도 3연속 검사를 안 건드린다',
+  시간축.some((r) => r.errors.some((e) => e.includes('이어진다') && !e.includes('쉼터간격')))
+);
+
+// ---- 예시=참 건너뛰기 ----
+
+// 같은 블록을 예시 표시만 붙였다 뗐다 하며 잰다.
+function 예시비교(만들기) {
+  const 그냥 = 만들기({});
+  const 예시 = 만들기({ 예시: '참' });
+  return { 그냥, 예시 };
+}
+
+const A예시 = 예시비교((extra) => {
+  const profiles = tilemap.loadProfiles();
+  const block = {
+    header: Object.assign({ move: 'flat' }, extra),
+    grid: ['#####', '#.Z.#', '#####'],
+    legend: {},
+  };
+  return tilemap.validate(block, profiles, { 점프높이: 4, 점프거리: 5, 정점거리: 2.5 });
+});
+확인('예시 A — 표시가 없으면 잡는다', A예시.그냥.errors.length > 0);
+확인('예시 A — 표시가 있으면 안 잡는다', A예시.예시.errors.length === 0);
+확인('예시 A — 건너뛴 것을 알려준다', A예시.예시.예시 === true);
+
+const B예시 = 예시비교((extra) =>
+  timeline.checkBlock({
+    tag: 'pacing',
+    header: Object.assign({ name: '예시 페이싱' }, extra),
+    lines: ['| 구간 | 종류 | 강도 |', '|---|---|---|', '| 1 | 전투 | 9 |'],
+  })
+);
+확인('예시 B — 표시가 없으면 잡는다', B예시.그냥.errors.length > 0);
+확인('예시 B — 표시가 있으면 안 잡는다', B예시.예시.errors.length === 0);
+확인('예시 B — 그림은 그대로 그린다', B예시.예시.text.includes('예시 페이싱'));
+
+// ---- 가이드 두 문서 · 폴더 훑기 ----
+
+const GUIDE = path.join(__dirname, '..', 'Docs', 'Guide');
+for (const 이름 of ['타일기호.md', '도면서식.md']) {
+  const found = all.checkFile(path.join(GUIDE, 이름));
+  확인(`훑기 [${이름}] 는 오류 0 이다`, found.errors.length === 0, found.errors.join(' / '));
+  확인(`훑기 [${이름}] 는 예시를 건너뛴다`, found.예시 > 0);
+}
+
+const 훑은파일 = all.findMarkdown(GUIDE, []);
+확인('훑기가 폴더 아래 .md 를 찾는다', 훑은파일.length >= 2);
+확인('훑기가 도면 없는 글은 거른다', all.hasBlock('# 그냥 글\n\n표도 격자도 없다.') === false);
+확인('훑기가 도면 든 글은 고른다', all.hasBlock('```pacing name="x"\n```') === true);
+
+// 문서 하나의 프로필 오타 때문에 훑기가 통째로 멎으면 안 된다.
+const 임시 = fs.mkdtempSync(path.join(require('os').tmpdir(), 'draw-'));
+const 오타파일 = path.join(임시, '오타.md');
+fs.writeFileSync(
+  오타파일,
+  '```tilemap name="오타" profile="없는프로필"\n###\n#P#\n###\n```\n범례: P=시작 #=벽\n',
+  'utf8'
+);
+let 훑기결과 = null;
+let 터졌나 = false;
+try {
+  훑기결과 = all.checkFile(오타파일);
+} catch (e) {
+  터졌나 = true;
+}
+확인('훑기는 프로필 오타에 안 터진다', 터졌나 === false);
+확인(
+  '훑기가 프로필 오타를 오류 한 줄로 알린다',
+  훑기결과 !== null && 훑기결과.errors.some((e) => e.includes('없는프로필')),
+  훑기결과 === null ? '터짐' : 훑기결과.errors.join(' / ')
+);
+fs.rmSync(임시, { recursive: true, force: true });
+
+// ---------------------------------------------------------------- 손으로 짠 격자
+
+// 격자 몇 줄만 넣어 바로 검사한다. 견본 파일을 만들 만큼 크지 않은 것들이다.
+function 격자검사(grid, legend, header) {
+  const profiles = tilemap.loadProfiles();
+  const block = {
+    header: Object.assign({ profile: '던전' }, header || {}),
+    grid,
+    legend: legend || {},
+  };
+  return tilemap.validate(block, profiles, { 점프높이: 4, 점프거리: 5, 정점거리: 2.5 }).errors;
+}
+
+const 막힌비트 = 격자검사(
+  ['#########', '#P.1#2#3#', '#########'],
+  { P: '시작', '#': '벽', '.': '바닥', 1: '비트', 2: '비트', 3: '비트' }
+);
+확인(
+  'A10 막히면 거기서 멈춘다 (한 번만 알린다)',
+  막힌비트.filter((e) => e.검사 === '10').length === 1,
+  막힌비트.map((e) => e.글).join(' / ')
+);
+
+const 빠진번호 = 격자검사(
+  ['#########', '#P.1.2#4#', '#########'],
+  { P: '시작', '#': '벽', '.': '바닥', 1: '비트', 2: '비트', 4: '비트' }
+);
+확인(
+  'A10 못 간 자리를 실제 앞 비트로 짚는다',
+  빠진번호.some((e) => e.글.includes('비트 2 에서 비트 4')),
+  빠진번호.map((e) => e.글).join(' / ')
+);
+확인('A10 빠진 번호를 짚는다', 빠진번호.some((e) => e.글.includes('빠진 비트 번호 : 3')));
+
+const 줄끝공백 = 격자검사(['#####', '#P..#  ', '#####'], { P: '시작', '#': '벽', '.': '바닥' });
+확인(
+  'A2 줄 끝 공백을 알아듣게 알린다',
+  줄끝공백.some((e) => e.글.includes('공백')),
+  줄끝공백.map((e) => e.글).join(' / ')
+);
+
+const 쉼터오타 = timeline.checkBlock({
+  tag: 'pacing',
+  header: { name: '쉼터 오타', 쉼터간격: '셋' },
+  lines: ['| 구간 | 종류 | 강도 |', '|---|---|---|', '| 1 | 전투 | 2 |'],
+});
+확인(
+  'B11 쉼터간격 오타를 조용히 넘기지 않는다',
+  쉼터오타.errors.some((e) => e.includes('쉼터간격')),
+  쉼터오타.errors.join(' / ')
+);
 
 // ---------------------------------------------------------------- 공통 읽기
 

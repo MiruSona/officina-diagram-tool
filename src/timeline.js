@@ -3,7 +3,7 @@
 // 표 서식은 Docs/Guide/도면서식.md 에 있다.
 
 const fs = require('fs');
-const { parseFenced, parseTable, escapeHtml, parseArgs } = require('./common');
+const { parseFenced, parseTable, escapeHtml, parseArgs, isExample } = require('./common');
 
 const FULL = '█';
 const EMPTY = '·';
@@ -123,6 +123,10 @@ function drawTimeline(block, errors) {
   return { text: lines.join('\n'), built };
 }
 
+// 검사 11 — 쉼터 없음. 강도 4 이상이 몇 칸까지 이어져도 되나.
+const HARD_LEVEL = 4;
+const DEFAULT_REST_GAP = 3;
+
 function drawPacing(block, errors) {
   const table = parseTable(block.lines);
   const unitCol = table.columns[0];
@@ -134,10 +138,25 @@ function drawPacing(block, errors) {
   let sameCount = 1;
   let last = null;
 
+  // 검사 11. 센 구간이 몇 개 이어졌나. 한도를 넘는 순간 한 번만 알리고 그 줄기가 끝날 때까지 입을 닫는다.
+  let restGap = DEFAULT_REST_GAP;
+  const 적은값 = block.header.쉼터간격;
+  if (적은값 !== undefined) {
+    restGap = Number(적은값);
+    if (Number.isNaN(restGap) || restGap < 1) {
+      errors.push(`쉼터간격 '${적은값}' 은 1 이상 숫자가 아니다. 기본값 ${DEFAULT_REST_GAP} 으로 쟀다.`);
+      restGap = DEFAULT_REST_GAP;
+    }
+  }
+  let hardRun = 0;
+  let toldRest = false;
+
   for (const row of table.rows) {
     const level = Number(row[levelCol]);
     if (Number.isNaN(level) || level < 0 || level > 5) {
       errors.push(`${row[unitCol]} 의 강도 '${row[levelCol]}' 는 0~5 가 아니다.`);
+      hardRun = 0;
+      toldRest = false;
       continue;
     }
 
@@ -161,6 +180,20 @@ function drawPacing(block, errors) {
       errors.push(`강도 ${level} 이 ${sameCount}번 이어진다. 높낮이를 번갈아 놓는다.`);
     }
     last = level;
+
+    if (level < HARD_LEVEL) {
+      hardRun = 0;
+      toldRest = false;
+      continue;
+    }
+    hardRun += 1;
+    if (hardRun <= restGap || toldRest) {
+      continue;
+    }
+    toldRest = true;
+    errors.push(
+      `강도 ${HARD_LEVEL} 이상이 ${hardRun}구간 이어진다. 쉼터간격 ${restGap} 을 넘었다. 쉴 틈을 넣는다.`
+    );
   }
 
   return { text: lines.join('\n') };
@@ -273,9 +306,20 @@ function draw(block, errors) {
   return drawCount(block, errors);
 }
 
+// 한 블록을 그리고 검사한다. `예시=참` 이면 그리기만 하고 알림은 버린다.
+function checkBlock(block) {
+  const errors = [];
+  const drawn = draw(block, errors);
+  if (isExample(block.header)) {
+    return { text: drawn.text, errors: [], 예시: true };
+  }
+  return { text: drawn.text, errors, 예시: false };
+}
+
 function run(files, flags) {
   const results = [];
   let bad = 0;
+  let 예시수 = 0;
 
   for (const file of files) {
     const blocks = parseFenced(fs.readFileSync(file, 'utf8'), ['timeline', 'pacing', 'count']);
@@ -284,16 +328,21 @@ function run(files, flags) {
     }
 
     for (const block of blocks) {
-      const errors = [];
-      const drawn = draw(block, errors);
+      const checked = checkBlock(block);
       const title = `${block.header.name || block.tag} (${block.tag})`;
-      results.push({ title, text: drawn.text, errors });
-      bad += errors.length;
+      results.push({ title, text: checked.text, errors: checked.errors });
+      bad += checked.errors.length;
+      if (checked.예시) {
+        예시수 += 1;
+      }
 
       console.log(`
 [${title}]`);
-      console.log(drawn.text);
-      for (const e of errors) {
+      console.log(checked.text);
+      if (checked.예시) {
+        console.log('  예시 블록이라 검사를 건너뛴다');
+      }
+      for (const e of checked.errors) {
         console.log(`  ! ${e}`);
       }
     }
@@ -305,8 +354,12 @@ function run(files, flags) {
 HTML 저장 : ${flags['--html']}`);
   }
 
+  let 꼬리 = '';
+  if (예시수 > 0) {
+    꼬리 = ` · 예시 ${예시수}개 건너뜀`;
+  }
   console.log(`
-알림 ${bad}개`);
+알림 ${bad}개${꼬리}`);
   return bad;
 }
 
@@ -326,4 +379,4 @@ if (require.main === module) {
   main();
 }
 
-module.exports = { parseRanges, buildTimeline, drawTimeline, drawPacing, drawCount, draw };
+module.exports = { parseRanges, buildTimeline, drawTimeline, drawPacing, drawCount, draw, checkBlock };
