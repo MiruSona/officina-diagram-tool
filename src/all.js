@@ -1,5 +1,5 @@
 // 폴더 전체 훑기. 도면이 든 .md 를 다 찾아 세 도구를 한꺼번에 돌린다.
-// 쓰는 법 : node all.js [폴더 ...]        인자가 없으면 Docs/ 를 본다. ToolTest/ 는 test.js 가 본다.
+// 쓰는 법 : node all.js [폴더 ...]        인자가 없으면 지금 있는 폴더(현재 작업 폴더)를 통째로 훑는다.
 //
 // 검사만 한다. HTML 은 안 뽑는다 — 그리려면 도구를 하나씩 부른다.
 
@@ -10,8 +10,6 @@ const timeline = require('./timeline');
 const lint = require('./lint');
 const { parseFenced, isExample } = require('./common');
 
-const ROOT = path.join(__dirname, '..', '..');
-const DEFAULT_DIRS = ['Docs'];
 
 const TILE_TAGS = ['tilemap'];
 const TIME_TAGS = ['timeline', 'pacing', 'count'];
@@ -150,9 +148,10 @@ function checkFile(file) {
 
 function main() {
   const args = process.argv.slice(2).filter((a) => !a.startsWith('--'));
+  const 기준 = process.cwd();
   let dirs = args;
   if (dirs.length === 0) {
-    dirs = DEFAULT_DIRS.map((d) => path.join(ROOT, d));
+    dirs = [기준];
   }
 
   const files = [];
@@ -174,8 +173,8 @@ function main() {
     합.오류 += found.errors.length;
     합.예시 += found.예시;
 
-    // 저장소 밖 폴더를 훑을 때는 상대 경로가 `../../..` 로 길어진다. 그럴 땐 그냥 전체 경로를 적는다.
-    let 쪽 = path.relative(ROOT, file).replace(/\\/g, '/');
+    // 지금 폴더 밖을 훑을 때는 상대 경로가 `../../..` 로 길어진다. 그럴 땐 그냥 전체 경로를 적는다.
+    let 쪽 = path.relative(기준, file).replace(/\\/g, '/');
     if (쪽.startsWith('..')) {
       쪽 = file.replace(/\\/g, '/');
     }

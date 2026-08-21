@@ -1,19 +1,18 @@
-# ToolTest — 도구 시험 한자리
+# Test — 도구 시험 한자리
 
-**`Tools/` 에 있는 도구를 시험하는 곳이다.** 견본과 기대값을 여기 몰아 둔다.
+**`DiagramTool/src/` 도구를 시험하는 곳이다.** 견본과 기대값을 여기 몰아 둔다.
 
 ```
-node ToolTest/test.js        <- 이것 하나면 된다. 회귀 시험 전부
+node DiagramTool/Test/test.js        <- 이것 하나면 된다. 회귀 시험 전부
 ```
 
 ## 폴더
 
 | 어디 | 무엇 |
 | --- | --- |
-| `ToolTest/test.js` | 회귀 시험. **기대값이 여기 적혀 있다** |
-| `ToolTest/Draw/` | 설명용 그림 툴 견본 |
-
-앞으로 다른 툴(그림·사운드)이 생기면 `ToolTest/` 아래에 폴더를 하나씩 더한다.
+| `Test/test.js` | 회귀 시험. **기대값이 여기 적혀 있다** |
+| `Test/견본*.md` · `Test/시험견본*.md` | 도면 견본 |
+| `Test/*.html` · `Test/견본-머메이드.md` | 눈으로 보는 결과물 |
 
 ## 견본 두 갈래
 
@@ -29,13 +28,18 @@ node ToolTest/test.js        <- 이것 하나면 된다. 회귀 시험 전부
 
 | 파일 | 어떻게 |
 | --- | --- |
-| `Draw/견본.html` · `Draw/견본-타임라인.html` | 브라우저로 연다 |
-| `Docs/Design/Wireframe/견본-HUD.html` | 〃 (CSS 를 링크로 물고 있어 저장소 안에서 열어야 한다) |
-| `Docs/Design/Wireframe/견본-머메이드.md` | 마크다운 미리보기로 연다 |
+| `견본.html` · `견본-타임라인.html` | 브라우저로 연다 |
+| `견본-HUD.html` | 〃 (`../src/wireframe.css` 를 링크로 물고 있어 폴더째 열어야 한다) |
+| `견본-머메이드.md` | 마크다운 미리보기로 연다 |
 
 ## 다시 뽑는 법
 
+저장소 뿌리에서 돌린다.
+
 ```
-node Tools/Draw/tilemap.js  ToolTest/Draw/견본.md ToolTest/Draw/견본-중력.md --html ToolTest/Draw/견본.html
-node Tools/Draw/timeline.js ToolTest/Draw/견본-타임라인.md --html ToolTest/Draw/견본-타임라인.html
+node DiagramTool/src/tilemap.js  DiagramTool/Test/견본.md DiagramTool/Test/견본-중력.md --html DiagramTool/Test/견본.html
+node DiagramTool/src/timeline.js DiagramTool/Test/견본-타임라인.md --html DiagramTool/Test/견본-타임라인.html
 ```
+
+> `Test/` 는 폴더 훑기(`src/all.js`) 대상으로 잡지 않는다.
+> 일부러 틀린 견본이 있어서 훑으면 늘 exit 1 이 된다.

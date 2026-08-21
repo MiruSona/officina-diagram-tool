@@ -1,5 +1,5 @@
 /* UI 와이어프레임. 색을 칠하지 않는다 — 자리와 크기만 본다.
-   쓰는 법 : <link rel="stylesheet" href="../../Tools/Draw/wireframe.css"> */
+   쓰는 법 : <link rel="stylesheet" href="../src/wireframe.css"> */
 
 /* 칸의 padding·테두리를 너비 안으로 넣는다. 이게 없으면 칸이 상자 밖으로 삐져나온다. */
 .wf *,

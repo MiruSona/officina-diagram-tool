@@ -1,6 +1,6 @@
 // 타일맵 검증기 + 렌더러.
 // 쓰는 법 : node tilemap.js <파일.md> [--html 결과.html] [--preview]
-// 문자 약속은 Docs/Guide/타일기호.md, 프로필은 profiles.json 에 있다.
+// 문자 약속은 DiagramTool/Docs/Guide 아래 타일기호.md, 프로필은 profiles.json 에 있다.
 
 const fs = require('fs');
 const path = require('path');

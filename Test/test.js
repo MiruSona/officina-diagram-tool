@@ -1,17 +1,17 @@
 // 도면 도구 회귀 시험. 검사가 "잡아야 할 것을 잡나" 와 "안 잡아야 할 것을 안 잡나" 를 둘 다 본다.
-// 쓰는 법 : node Tools/Draw/test.js
+// 쓰는 법 : node DiagramTool/Test/test.js
 //
 // 견본을 눈으로 보는 것만으로는 검사가 조용히 죽어도 모른다. 그래서 기대값을 여기 적어 둔다.
 
 const fs = require('fs');
 const path = require('path');
-const tilemap = require('../Tools/Draw/tilemap');
-const timeline = require('../Tools/Draw/timeline');
-const lint = require('../Tools/Draw/lint');
-const all = require('../Tools/Draw/all');
-const { parseFenced, parseAmounts, mermaidId } = require('../Tools/Draw/common');
+const tilemap = require('../src/tilemap');
+const timeline = require('../src/timeline');
+const lint = require('../src/lint');
+const all = require('../src/all');
+const { parseFenced, parseAmounts, mermaidId } = require('../src/common');
 
-const HERE = path.join(__dirname, 'Draw');
+const HERE = __dirname;
 let 통과 = 0;
 const 실패 = [];
 

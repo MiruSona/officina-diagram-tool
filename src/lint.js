@@ -1,6 +1,6 @@
 // 엔진 C — 관계 표 린터. 그림 도구가 아니라 검사 도구다.
 // 쓰는 법 : node lint.js <파일.md> [--mermaid]
-// 표 서식은 Docs/Guide/도면서식.md, 켤 검사는 profiles.json 에 있다.
+// 표 서식은 DiagramTool/Docs/Guide 아래 도면서식.md, 켤 검사는 profiles.json 에 있다.
 
 const fs = require('fs');
 const path = require('path');

@@ -1,6 +1,6 @@
 // 엔진 B — 표를 막대로 바꾼다.
 // 쓰는 법 : node timeline.js <파일.md> [--html 결과.html]
-// 표 서식은 Docs/Guide/도면서식.md 에 있다.
+// 표 서식은 DiagramTool/Docs/Guide 아래 도면서식.md 에 있다.
 
 const fs = require('fs');
 const { parseFenced, parseTable, escapeHtml, parseArgs, isExample } = require('./common');
