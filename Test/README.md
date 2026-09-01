@@ -1,9 +1,9 @@
 # Test — 도구 시험 한자리
 
-**`DiagramTool/src/` 도구를 시험하는 곳이다.** 견본과 기대값을 여기 몰아 둔다.
+**`src/` 도구를 시험하는 곳이다.** 견본과 기대값을 여기 몰아 둔다.
 
 ```
-node DiagramTool/Test/test.js        <- 이것 하나면 된다. 회귀 시험 전부
+node Test/test.js        <- 이것 하나면 된다. 회귀 시험 전부
 ```
 
 ## 폴더
@@ -37,8 +37,8 @@ node DiagramTool/Test/test.js        <- 이것 하나면 된다. 회귀 시험 �
 저장소 뿌리에서 돌린다.
 
 ```
-node DiagramTool/src/tilemap.js  DiagramTool/Test/견본.md DiagramTool/Test/견본-중력.md --html DiagramTool/Test/견본.html
-node DiagramTool/src/timeline.js DiagramTool/Test/견본-타임라인.md --html DiagramTool/Test/견본-타임라인.html
+node src/tilemap.js  Test/견본.md Test/견본-중력.md --html Test/견본.html
+node src/timeline.js Test/견본-타임라인.md --html Test/견본-타임라인.html
 ```
 
 > `Test/` 는 폴더 훑기(`src/all.js`) 대상으로 잡지 않는다.
