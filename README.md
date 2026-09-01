@@ -32,14 +32,25 @@
 
 문서 안에 코드펜스로 도면을 적고, 그 문서에 도구를 돌린다.
 
+**명령 앞자리가 두 벌이다.** 이 저장소를 단독으로 열었으면 `node src/…`,
+스튜디오(Officina)에 서브모듈로 물린 상태면 `node DiagramTool/src/…` 로 부른다.
+아래 표는 단독 기준이다.
+
 | 그리려는 것 | 코드펜스 | 명령 |
 | --- | --- | --- |
-| 레벨·맵 | `tilemap` | `node DiagramTool/src/tilemap.js <파일.md>` |
-| 프레임·페이싱·개수 분포 | `timeline` `pacing` `count` | `node DiagramTool/src/timeline.js <파일.md>` |
-| 생산 사슬·카드·테크 | `chain` `cards` `tech` | `node DiagramTool/src/lint.js <파일.md>` |
+| 레벨·맵 | `tilemap` | `node src/tilemap.js <파일.md>` |
+| 프레임·페이싱·개수 분포 | `timeline` `pacing` `count` | `node src/timeline.js <파일.md>` |
+| 생산 사슬·카드·테크 | `chain` `cards` `tech` | `node src/lint.js <파일.md>` |
 | 상태도·흐름도 | `mermaid` | 도구 없음. `Docs/Guide` 의 `그림그리기.md` 규칙만 지킨다 |
 
 ```
+# 단독 저장소에서
+node src/tilemap.js  <파일.md ...> [--preview] [--html 결과.html]
+node src/timeline.js <파일.md ...> [--html 결과.html]
+node src/lint.js     <파일.md ...> [--mermaid]
+node src/all.js      [폴더 ...]
+
+# 스튜디오에서 (서브모듈로 물린 상태)
 node DiagramTool/src/tilemap.js  <파일.md ...> [--preview] [--html 결과.html]
 node DiagramTool/src/timeline.js <파일.md ...> [--html 결과.html]
 node DiagramTool/src/lint.js     <파일.md ...> [--mermaid]

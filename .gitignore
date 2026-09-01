@@ -1,0 +1,15 @@
+# DiagramTool — Node 만 쓰는 툴이라 무시할 것이 적다
+
+# 도구가 뽑는 결과물
+*.log
+.utmp/
+out/
+결과.html
+
+# OS·편집기 부스러기
+.DS_Store
+Thumbs.db
+*.swp
+
+# 로컬 전용 문서 (저장소에 올리지 않는다)
+*.local.md
