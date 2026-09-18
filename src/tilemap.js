@@ -1,6 +1,6 @@
 // 타일맵 검증기 + 렌더러.
 // 쓰는 법 : node tilemap.js <파일.md> [--html 결과.html] [--preview]
-// 문자 약속은 DiagramTool/Docs/Guide 아래 타일기호.md, 프로필은 profiles.json 에 있다.
+// 문자 약속은 Docs/Guide 아래 타일기호.md, 프로필은 profiles.json 에 있다.
 
 const fs = require('fs');
 const path = require('path');
@@ -251,14 +251,54 @@ function makeWalker(grid, chars) {
     }
   };
 
-  // 주운 열쇠가 남아 있는 동안 못 연 문을 하나씩 연다. 먼저 만난 문부터 연다.
+  // 한 문을 열어 본다. 문 뒤로 번져 나간 뒤 열쇠가 새로 나왔는지 돌려준다.
+  const 열어보기 = (spot) => {
+    const 열쇠수 = keys.size;
+    const parts = spot.split(',');
+    opened.add(spot);
+    doors.delete(spot);
+    flood({ x: Number(parts[0]), y: Number(parts[1]) });
+    return keys.size > 열쇠수;
+  };
+
+  const 담기 = () => ({
+    seen: new Set(seen),
+    doors: new Set(doors),
+    opened: new Set(opened),
+    keys: new Set(keys),
+  });
+
+  const 되돌리기 = (담은것) => {
+    for (const 이름 of ['seen', 'doors', 'opened', 'keys']) {
+      const 통 = { seen, doors, opened, keys }[이름];
+      통.clear();
+      for (const v of 담은것[이름]) {
+        통.add(v);
+      }
+    }
+  };
+
+  // 주운 열쇠가 남아 있는 동안 못 연 문을 연다.
+  // 먼저 만난 문부터 덮어놓고 열면, 열쇠 하나로 막다른 문을 열어 버리고 정작 열쇠가 든 문을 못 연다.
+  // 그래서 **열쇠가 새로 나오는 문을 먼저** 연다. 새 열쇠가 나오면 처음부터 다시 훑는다(고정점).
+  // 어느 문을 열어도 열쇠가 안 나오는 상태면 순서가 결과를 안 바꾸니 그때 하나씩 연다.
   const openDoors = () => {
     while (doors.size > 0 && keys.size - opened.size > 0) {
-      const spot = doors.values().next().value;
-      const parts = spot.split(',');
-      opened.add(spot);
-      doors.delete(spot);
-      flood({ x: Number(parts[0]), y: Number(parts[1]) });
+      let 열었나 = false;
+
+      for (const spot of Array.from(doors)) {
+        const 담은것 = 담기();
+        if (열어보기(spot)) {
+          열었나 = true;
+          break;
+        }
+        되돌리기(담은것);
+      }
+      if (열었나) {
+        continue;
+      }
+
+      열어보기(doors.values().next().value);
     }
   };
 
@@ -619,6 +659,12 @@ function validate(block, profiles, baseline) {
         글: '이동 기준선(baseline) 표가 없어서 기본값(높이 4 · 거리 5 · 정점 2.5)으로 쟀다.',
       });
     }
+    if (baseline.이름없음) {
+      errors.push({
+        검사: '4a',
+        글: `기준선 '${baseline.이름없음}' 표가 이 파일에 없다. 다른 기준선 표로 쟀다.`,
+      });
+    }
     if (baseline.빠진값 && baseline.빠진값.length > 0) {
       errors.push({
         검사: '4a',
@@ -652,6 +698,11 @@ function loadBaseline(text, wanted, move) {
   if (wanted) {
     block = blocks.find((b) => b.header.name === wanted) || null;
   }
+  // 이름을 적었는데 그런 표가 없으면 오타다. 조용히 다른 표로 재면 엉뚱한 값으로 잰 줄 모른다.
+  let 이름없음 = null;
+  if (wanted && !block) {
+    이름없음 = wanted;
+  }
   if (!block && move) {
     block = blocks.find((b) => b.header.move === move) || null;
   }
@@ -659,7 +710,7 @@ function loadBaseline(text, wanted, move) {
     block = blocks[0];
   }
 
-  const baseline = Object.assign({}, DEFAULT_BASELINE, { 기본값: false, 빠진값: [] });
+  const baseline = Object.assign({}, DEFAULT_BASELINE, { 기본값: false, 빠진값: [], 이름없음 });
   const read = new Set();
   for (const row of parseTable(block.lines).rows) {
     const field = BASELINE_LABEL[row['항목']];

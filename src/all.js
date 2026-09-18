@@ -104,12 +104,30 @@ function runLint(text, found) {
   }
 
   const profiles = lint.loadProfiles();
-  const techs = lint.readTech(parseFenced(text, ['tech']).filter((b) => !isExample(b.header)));
+  const techBlocks = parseFenced(text, ['tech']).filter((b) => !isExample(b.header));
+  const techs = lint.readTech(techBlocks);
+
+  // 머리글이 틀린 표는 검사가 조용히 통과한다. 훑기에서도 먼저 걸러 알린다.
+  for (const block of techBlocks) {
+    const 빠진 = lint.빠진열(block);
+    if (빠진.length === 0) {
+      continue;
+    }
+    found.errors.push(`[${block.header.name || 'tech'}] 표에 '${빠진.join("' · '")}' 열이 없다. 머리글을 확인한다.`);
+  }
 
   for (const block of blocks) {
     found.blocks += 1;
     if (isExample(block.header)) {
       found.예시 += 1;
+      continue;
+    }
+
+    const 빠진 = lint.빠진열(block);
+    if (빠진.length > 0) {
+      found.errors.push(
+        `[${block.header.name || block.tag}] 표에 '${빠진.join("' · '")}' 열이 없다. 머리글을 확인한다.`
+      );
       continue;
     }
 

@@ -61,7 +61,30 @@ function parseFenced(text, tags) {
   return blocks;
 }
 
+// 한 줄을 칸으로 나눈다. `\|` 는 칸 구분이 아니라 글자 그대로의 `|` 다.
+function splitCells(body) {
+  const cells = [];
+  let cur = '';
+  for (let i = 0; i < body.length; i += 1) {
+    const ch = body[i];
+    if (ch === '\\' && body[i + 1] === '|') {
+      cur += '|';
+      i += 1;
+      continue;
+    }
+    if (ch === '|') {
+      cells.push(cur.trim());
+      cur = '';
+      continue;
+    }
+    cur += ch;
+  }
+  cells.push(cur.trim());
+  return cells;
+}
+
 // | 구간 | 프레임 |  ->  { columns: ['구간','프레임'], rows: [{구간:'선딜', 프레임:'1-8'}] }
+// 끝 `|` 는 있어도 없어도 된다. 없다고 마지막 글자를 잘라먹으면 안 된다.
 function parseTable(lines) {
   const rows = [];
   let columns = null;
@@ -71,11 +94,15 @@ function parseTable(lines) {
     if (!trimmed.startsWith('|')) {
       continue;
     }
-    if (/^\|[\s:|-]+\|$/.test(trimmed)) {
+    if (/^\|[\s:|-]+\|?$/.test(trimmed)) {
       continue;
     }
 
-    const cells = trimmed.slice(1, -1).split('|').map((c) => c.trim());
+    let body = trimmed.slice(1);
+    if (body.endsWith('|') && !body.endsWith('\\|')) {
+      body = body.slice(0, -1);
+    }
+    const cells = splitCells(body);
     if (columns === null) {
       columns = cells;
       continue;
@@ -139,9 +166,18 @@ function parseAmounts(text) {
 }
 
 // Mermaid 노드 id 로 쓸 수 있게 다듬는다. 공백·괄호·빼기표가 들어가면 파서가 깨진다.
+// 못 쓰는 글자를 전부 `_` 하나로 바꾸면 '철 광석' 과 '철_광석' 이 한 노드가 된다.
+// 그래서 `_` 는 `__` 로, 나머지는 `_x<코드>_` 로 바꿔 이름마다 다른 id 가 나오게 한다.
 function mermaidId(prefix, name) {
-  const safe = String(name).replace(/[^\w가-힣]/g, '_');
+  const safe = String(name)
+    .replace(/_/g, '__')
+    .replace(/[^\w가-힣]/g, (ch) => `_x${ch.codePointAt(0).toString(16)}_`);
   return `${prefix}${safe}`;
+}
+
+// Mermaid 라벨 안의 `"` 는 그대로 두면 라벨이 거기서 끊긴다. 엔티티로 바꾼다.
+function mermaidLabel(text) {
+  return String(text).replace(/"/g, '#quot;');
 }
 
 // HTML 로 뽑을 때 이름·라벨에 태그가 섞여도 안 깨지게 한다.
@@ -184,6 +220,7 @@ module.exports = {
   parseDict,
   parseAmounts,
   mermaidId,
+  mermaidLabel,
   escapeHtml,
   parseArgs,
 };

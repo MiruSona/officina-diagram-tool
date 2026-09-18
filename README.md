@@ -67,10 +67,10 @@ node DiagramTool/src/all.js      [폴더 ...]
 ## 시험 돌리는 법
 
 ```
-node DiagramTool/Test/test.js
+node Test/test.js
 ```
 
-`통과 83개 · 실패 0개` 가 나오면 정상이다. 자세한 것은 `Test/README.md` 를 본다.
+`통과 108개 · 실패 0개` 가 나오면 정상이다. 자세한 것은 `Test/README.md` 를 본다.
 
 ## 먼저 읽을 문서
 

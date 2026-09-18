@@ -1,6 +1,6 @@
 // 엔진 C — 관계 표 린터. 그림 도구가 아니라 검사 도구다.
 // 쓰는 법 : node lint.js <파일.md> [--mermaid]
-// 표 서식은 DiagramTool/Docs/Guide 아래 도면서식.md, 켤 검사는 profiles.json 에 있다.
+// 표 서식은 Docs/Guide 아래 도면서식.md, 켤 검사는 profiles.json 에 있다.
 
 const fs = require('fs');
 const path = require('path');
@@ -10,6 +10,7 @@ const {
   parseDict,
   parseAmounts,
   mermaidId,
+  mermaidLabel,
   parseArgs,
   isExample,
 } = require('./common');
@@ -68,6 +69,25 @@ function parseQuota(lines, name) {
     quota[name2.split('(')[0].trim()] = 0;
   }
   return quota;
+}
+
+// 표에 꼭 있어야 하는 열. 나머지(초당·채수·해금 테크·희귀도 …)는 없으면 기본값을 쓴다.
+// 도면서식.md 의 「5. 생산 사슬」 · 「6. 카드 표」 를 따른다.
+const 필요열 = {
+  chain: ['건물', '넣는 것', '나오는 것'],
+  cards: ['id', '이름', '비용', '종류'],
+  tech: ['테크'],
+};
+
+// 머리글 오타를 조용히 넘기면 표가 통째로 빈 값이 되어 「문제 없음」 이 나온다.
+function 빠진열(block) {
+  const need = 필요열[block.tag] || [];
+  const have = parseTable(block.lines).columns;
+  return need.filter((name) => !have.includes(name));
+}
+
+function 빠진열글(block, 빠진) {
+  return `[${block.header.name || block.tag}] 표에 '${빠진.join("' · '")}' 열이 없다. 머리글을 확인한다.`;
 }
 
 function readChain(block) {
@@ -463,7 +483,7 @@ function chainToMermaid(chain) {
   const seen = new Set();
 
   chain.buildings.forEach((b, i) => {
-    lines.push(`    B${i}["${b.이름}"]`);
+    lines.push(`    B${i}["${mermaidLabel(b.이름)}"]`);
   });
 
   chain.buildings.forEach((b, i) => {
@@ -471,17 +491,17 @@ function chainToMermaid(chain) {
       const key = mermaidId('R_', need.이름);
       if (!seen.has(key)) {
         seen.add(key);
-        lines.push(`    ${key}(["${need.이름}"])`);
+        lines.push(`    ${key}(["${mermaidLabel(need.이름)}"])`);
       }
-      lines.push(`    ${key} -->|"${need.개수}"| B${i}`);
+      lines.push(`    ${key} -->|"${mermaidLabel(need.개수)}"| B${i}`);
     }
     for (const out of b.나오는것) {
       const key = mermaidId('R_', out.이름);
       if (!seen.has(key)) {
         seen.add(key);
-        lines.push(`    ${key}(["${out.이름}"])`);
+        lines.push(`    ${key}(["${mermaidLabel(out.이름)}"])`);
       }
-      lines.push(`    B${i} -->|"${out.개수}"| ${key}`);
+      lines.push(`    B${i} -->|"${mermaidLabel(out.개수)}"| ${key}`);
     }
   });
 
@@ -489,11 +509,11 @@ function chainToMermaid(chain) {
 }
 
 function cardsToMermaid(deck, archetype) {
-  const lines = ['flowchart LR', `    A["${archetype}"]`];
+  const lines = ['flowchart LR', `    A["${mermaidLabel(archetype)}"]`];
   const members = deck.cards.filter((c) => c.아키타입.includes(archetype));
 
   members.forEach((card, i) => {
-    lines.push(`    C${i}["${card.이름} (${card.비용})"]`);
+    lines.push(`    C${i}["${mermaidLabel(card.이름)} (${mermaidLabel(card.비용)})"]`);
     lines.push(`    A --> C${i}`);
   });
 
@@ -504,16 +524,37 @@ function lintFile(file, flags) {
   const profiles = loadProfiles();
   const text = fs.readFileSync(file, 'utf8');
   // 예시 테크 블록은 온전한 트리가 아니라 사슬 검사의 밑감으로도 안 쓴다.
-  const techs = readTech(parseFenced(text, ['tech']).filter((b) => !isExample(b.header)));
+  const techBlocks = parseFenced(text, ['tech']).filter((b) => !isExample(b.header));
+  const techs = readTech(techBlocks);
   const blocks = parseFenced(text, ['chain', 'cards']);
   let bad = 0;
   let 예시수 = 0;
+  let 치명 = 0;
+
+  // 머리글이 틀린 표는 검사를 돌려도 뜻이 없다. 검사 전에 먼저 걸러 알린다.
+  for (const block of techBlocks) {
+    const 빠진 = 빠진열(block);
+    if (빠진.length === 0) {
+      continue;
+    }
+    console.log(`
+${빠진열글(block, 빠진)}`);
+    치명 += 1;
+  }
 
   for (const block of blocks) {
     if (isExample(block.header)) {
       예시수 += 1;
       console.log(`
 [${block.header.name || block.tag}] 예시 블록이라 검사를 건너뛴다`);
+      continue;
+    }
+
+    const 빠진 = 빠진열(block);
+    if (빠진.length > 0) {
+      console.log(`
+${빠진열글(block, 빠진)}`);
+      치명 += 1;
       continue;
     }
 
@@ -565,7 +606,7 @@ function lintFile(file, flags) {
     }
   }
 
-  return { blocks: blocks.length, bad, 예시수 };
+  return { blocks: blocks.length, bad, 예시수, 치명 };
 }
 
 function main() {
@@ -578,11 +619,20 @@ function main() {
   let bad = 0;
   let blocks = 0;
   let 예시수 = 0;
+  let 치명 = 0;
   for (const file of files) {
     const result = lintFile(file, flags);
     bad += result.bad;
     blocks += result.blocks;
     예시수 += result.예시수;
+    치명 += result.치명;
+  }
+
+  // 표 머리글이 틀린 것은 도면 내용 오류(exit 1)가 아니라 서식 오류다. 쓰는 법 오류와 같은 exit 2 로 알린다.
+  if (치명 > 0) {
+    console.log(`
+읽을 수 없는 표 ${치명}개`);
+    process.exit(2);
   }
 
   if (blocks === 0) {
@@ -616,4 +666,5 @@ module.exports = {
   spread,
   getProfile,
   loadProfiles,
+  빠진열,
 };

@@ -1,5 +1,5 @@
 // 도면 도구 회귀 시험. 검사가 "잡아야 할 것을 잡나" 와 "안 잡아야 할 것을 안 잡나" 를 둘 다 본다.
-// 쓰는 법 : node DiagramTool/Test/test.js
+// 쓰는 법 : node Test/test.js
 //
 // 견본을 눈으로 보는 것만으로는 검사가 조용히 죽어도 모른다. 그래서 기대값을 여기 적어 둔다.
 
@@ -9,7 +9,8 @@ const tilemap = require('../src/tilemap');
 const timeline = require('../src/timeline');
 const lint = require('../src/lint');
 const all = require('../src/all');
-const { parseFenced, parseAmounts, mermaidId } = require('../src/common');
+const { spawnSync } = require('child_process');
+const { parseFenced, parseTable, parseAmounts, mermaidId, mermaidLabel } = require('../src/common');
 
 const HERE = __dirname;
 let 통과 = 0;
@@ -433,6 +434,146 @@ const 선언줄 = 사슬그림.split('\n').filter((l) => l.startsWith('    ') &&
 const 성한선언 = (l) => /^ {4}[A-Za-z_][\w가-힣]*(\[|\(\[)"/.test(l);
 확인('Mermaid 선언이 나온다', 선언줄.length > 0);
 확인('Mermaid 노드 id 에 빈칸이 없다', 선언줄.every(성한선언), 선언줄.find((l) => !성한선언(l)));
+
+// ---------------------------------------------------------------- 리뷰 고침 (2026-09-18)
+
+// 조용한 오작동을 재현하는 시험들이다. 고치기 전에는 여기가 다 빨갛다.
+
+// ---- G6. 표 읽기 — 끝 `|` 없는 행 · `\|` 이스케이프 ----
+
+const 끝막대없음 = parseTable(['| 구간 | 프레임 ', '|---|---', '| 선딜 | 1-8 ']);
+확인('표 끝 `|` 가 없어도 마지막 글자가 안 잘린다', 끝막대없음.rows[0]['프레임'] === '1-8', JSON.stringify(끝막대없음));
+확인('표 끝 `|` 가 없어도 머리글이 성하다', 끝막대없음.columns[1] === '프레임', JSON.stringify(끝막대없음.columns));
+
+const 이스케이프 = parseTable(['| 이름 | 뜻 |', '|---|---|', '| 또는 | 이것 \\| 저것 |']);
+확인('`\\|` 는 칸 구분이 아니라 글자 그대로의 `|` 다', 이스케이프.rows[0]['뜻'] === '이것 | 저것', JSON.stringify(이스케이프.rows[0]));
+
+// ---- G8. Mermaid id 충돌 · 라벨 안 따옴표 ----
+
+확인('Mermaid id 가 공백과 밑줄을 안 뭉갠다', mermaidId('R_', '철 광석') !== mermaidId('R_', '철_광석'));
+확인('Mermaid id 는 여전히 빈칸이 없다', !mermaidId('R_', '철 광석').includes(' '));
+확인('Mermaid 라벨의 따옴표를 이스케이프한다', !mermaidLabel('"열쇠" 상자').includes('"'));
+
+// ---- G1. 표 머리글 오타 ----
+
+const 오타사슬 = {
+  tag: 'chain',
+  header: { name: '머리글 오타' },
+  lines: ['| 건물 | 넣는 거 | 나오는 것 |', '|---|---|---|', '| 밀농장 | — | 밀 2 |'],
+};
+확인('머리글 오타를 빠진 열로 잡는다', lint.빠진열(오타사슬).includes('넣는 것'), lint.빠진열(오타사슬).join(' / '));
+확인(
+  '성한 머리글은 빠진 열이 없다',
+  lint.빠진열(parseFenced(read('견본-사슬.md'), ['chain'])[0]).length === 0
+);
+확인('카드 표 머리글도 본다', lint.빠진열({ tag: 'cards', header: {}, lines: ['| id | 이름 |', '|---|---|'] }).includes('비용'));
+확인('테크 표 머리글도 본다', lint.빠진열({ tag: 'tech', header: {}, lines: ['| 테크명 |', '|---|'] }).includes('테크'));
+
+// ---- G2 · G5. 빈 칸과 숫자 아닌 값 ----
+
+const 빈강도 = timeline.checkBlock({
+  tag: 'pacing',
+  header: { name: '빈 강도' },
+  lines: ['| 구간 | 종류 | 강도 |', '|---|---|---|', '| 1 | 전투 |  |'],
+});
+확인('B 빈 강도 칸을 0 으로 안 읽는다', 빈강도.errors.some((e) => e.includes('못 읽었다')), 빈강도.errors.join(' / '));
+
+const 빈개수 = [];
+timeline.draw(
+  { tag: 'count', header: { name: '빈 개수' }, lines: ['| 칸 | 개수 |', '|---|---|', '| 1 |  |'] },
+  빈개수
+);
+확인('B 빈 개수 칸을 0 으로 안 읽는다', 빈개수.some((e) => e.includes('못 읽었다')), 빈개수.join(' / '));
+
+const 오타총길이 = [];
+timeline.draw(
+  { tag: 'timeline', header: { name: '오타', total: '서른넷' }, lines: ['| 구간 | 프레임 |', '|---|---|', '| 선딜 | 1-8 |'] },
+  오타총길이
+);
+확인('B 못 읽는 total 을 알린다', 오타총길이.some((e) => e.includes('못 읽었다')), 오타총길이.join(' / '));
+확인(
+  'B 못 읽는 total 이 NaN 으로 안 샌다',
+  !timeline
+    .draw(
+      { tag: 'timeline', header: { name: '오타', total: '서른넷' }, lines: ['| 구간 | 프레임 |', '|---|---|', '| 선딜 | 1-8 |'] },
+      []
+    )
+    .text.includes('NaN')
+);
+
+const 오타목표 = [];
+const 목표그림 = timeline.draw(
+  { tag: 'count', header: { name: '오타 목표', 목표: '1,둘' }, lines: ['| 칸 | 개수 |', '|---|---|', '| 1 | 2 |', '| 2 | 3 |'] },
+  오타목표
+);
+확인('B 못 읽는 목표를 알린다', 오타목표.some((e) => e.includes('못 읽었다')), 오타목표.join(' / '));
+확인('B 못 읽는 목표가 NaN 으로 안 샌다', !목표그림.text.includes('NaN'), 목표그림.text);
+
+// ---- G3. 열쇠 배분 ----
+
+// 왼쪽 문은 막다른 굴, 오른쪽 문 뒤에 열쇠가 하나 더 있다.
+// 먼저 만난 문부터 덮어놓고 열면 열쇠를 헛써서 오른쪽을 못 연다.
+const 열쇠배분 = 격자검사(
+  ['########', '#+.PK.+#', '#.####K#', '########'],
+  { P: '시작', '#': '벽', '.': '바닥', '+': '문', K: '열쇠' }
+);
+확인(
+  'A4b 열쇠를 막다른 문에 헛쓰지 않는다',
+  열쇠배분.filter((e) => e.검사 === '4b').length === 0,
+  열쇠배분.map((e) => e.글).join(' / ')
+);
+
+// ---- G4. 기준선 이름 오타 ----
+
+const 기준선문서 = [
+  '```baseline move=gravity name="주인공"',
+  '| 항목 | 값 |',
+  '|---|---|',
+  '| 점프 최고 높이 | 4 |',
+  '| 점프 최대 거리 | 5 |',
+  '| 정점까지 거리 | 2.5 |',
+  '```',
+].join('\n');
+
+확인('A4a 성한 기준선 이름은 조용하다', !tilemap.loadBaseline(기준선문서, '주인공', 'gravity').이름없음);
+const 오타기준선 = tilemap.loadBaseline(기준선문서, '주인고', 'gravity');
+확인('A4a 기준선 이름 오타를 알아챈다', 오타기준선.이름없음 === '주인고');
+const 오타기준선알림 = tilemap.validate(
+  { header: { move: 'gravity' }, grid: ['..P..', '#####'], legend: {} },
+  tilemap.loadProfiles(),
+  오타기준선
+).errors;
+확인(
+  'A4a 기준선 이름 오타를 오류로 알린다',
+  오타기준선알림.some((e) => e.글.includes('주인고')),
+  오타기준선알림.map((e) => e.글).join(' / ')
+);
+
+// ---- G7 · G1. 끝내는 값(exit code) ----
+
+const 임시2 = fs.mkdtempSync(path.join(require('os').tmpdir(), 'draw-exit-'));
+const 노드 = (스크립트, 인자) =>
+  spawnSync(process.execPath, [path.join(HERE, '..', 'src', 스크립트)].concat(인자), { encoding: 'utf8' });
+
+const 도면없는파일 = path.join(임시2, '도면없음.md');
+fs.writeFileSync(도면없는파일, '# 그냥 글\n\n표도 격자도 없다.\n', 'utf8');
+확인('B 블록이 없으면 exit 2 다', 노드('timeline.js', [도면없는파일]).status === 2);
+확인(
+  'B --html 뒤에 이름이 없으면 exit 2 다',
+  노드('timeline.js', [path.join(HERE, '견본-타임라인.md'), '--html']).status === 2
+);
+
+const 오타표파일 = path.join(임시2, '오타표.md');
+fs.writeFileSync(
+  오타표파일,
+  '```chain profile="tycoon" name="머리글 오타"\n| 건물 | 넣는 거 | 나오는 것 |\n|---|---|---|\n| 밀농장 | — | 밀 2 |\n```\n',
+  'utf8'
+);
+const 오타표결과 = 노드('lint.js', [오타표파일]);
+확인('C 머리글이 틀린 표는 exit 2 다', 오타표결과.status === 2, String(오타표결과.status));
+확인('C 머리글이 틀린 표를 「문제 없음」 이라 안 한다', !오타표결과.stdout.includes('문제 없음'), 오타표결과.stdout);
+확인('C 훑기도 머리글 오타를 잡는다', all.checkFile(오타표파일).errors.some((e) => e.includes('넣는 것')));
+fs.rmSync(임시2, { recursive: true, force: true });
 
 // ---------------------------------------------------------------- 결과
 

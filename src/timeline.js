@@ -1,6 +1,6 @@
 // 엔진 B — 표를 막대로 바꾼다.
 // 쓰는 법 : node timeline.js <파일.md> [--html 결과.html]
-// 표 서식은 DiagramTool/Docs/Guide 아래 도면서식.md 에 있다.
+// 표 서식은 Docs/Guide 아래 도면서식.md 에 있다.
 
 const fs = require('fs');
 const { parseFenced, parseTable, escapeHtml, parseArgs, isExample } = require('./common');
@@ -25,6 +25,23 @@ function parseRanges(text) {
     out.push([from, to]);
   }
   return out;
+}
+
+// 빈 칸을 Number() 로 읽으면 ''  -> 0 이라 못 적은 값이 0 으로 둔갑한다.
+// 못 읽은 것은 0 이 아니라 못 읽은 것이다. 읽었으면 숫자, 못 읽었으면 null 을 돌려준다.
+function 숫자읽기(text) {
+  if (text === undefined || text === null) {
+    return null;
+  }
+  const 다듬은 = String(text).trim();
+  if (다듬은 === '') {
+    return null;
+  }
+  const value = Number(다듬은);
+  if (Number.isNaN(value)) {
+    return null;
+  }
+  return value;
 }
 
 function padRight(text, width) {
@@ -60,7 +77,16 @@ function buildTimeline(block, errors) {
   const nameCol = table.columns[0];
   const rangeCol = table.columns[1];
   const bars = [];
-  let total = Number(block.header.total || 0);
+  let total = 0;
+  if (block.header.total !== undefined) {
+    const 읽은값 = 숫자읽기(block.header.total);
+    if (읽은값 === null || 읽은값 < 1) {
+      errors.push(`총 길이 '${block.header.total}' 을 못 읽었다. 제일 큰 프레임 번호로 쟀다.`);
+    }
+    if (읽은값 !== null && 읽은값 >= 1) {
+      total = 읽은값;
+    }
+  }
 
   for (const row of table.rows) {
     const ranges = parseRanges(row[rangeCol]);
@@ -152,8 +178,14 @@ function drawPacing(block, errors) {
   let toldRest = false;
 
   for (const row of table.rows) {
-    const level = Number(row[levelCol]);
-    if (Number.isNaN(level) || level < 0 || level > 5) {
+    const level = 숫자읽기(row[levelCol]);
+    if (level === null) {
+      errors.push(`${row[unitCol]} 의 강도 '${row[levelCol]}' 를 못 읽었다.`);
+      hardRun = 0;
+      toldRest = false;
+      continue;
+    }
+    if (level < 0 || level > 5) {
       errors.push(`${row[unitCol]} 의 강도 '${row[levelCol]}' 는 0~5 가 아니다.`);
       hardRun = 0;
       toldRest = false;
@@ -208,14 +240,18 @@ function drawCount(block, errors) {
   const rows = table.rows;
 
   let goals = [];
-  if (block.header.목표) {
-    goals = block.header.목표.split(',').map(Number);
+  if (block.header.목표 !== undefined) {
+    goals = block.header.목표.split(',').map(숫자읽기);
+    if (goals.some((v) => v === null)) {
+      errors.push(`목표 '${block.header.목표}' 를 못 읽었다. 목표 없이 그렸다.`);
+      goals = [];
+    }
   }
   if (goals.length > 0 && goals.length !== rows.length) {
     errors.push(`목표 개수(${goals.length})가 표 줄 수(${rows.length})와 다르다.`);
   }
 
-  const counts = rows.map((r) => Number(r[countCol])).filter((v) => !Number.isNaN(v));
+  const counts = rows.map((r) => 숫자읽기(r[countCol])).filter((v) => v !== null);
   const biggest = Math.max(...counts, 1);
   let step = 1;
   if (biggest > COUNT_WIDTH) {
@@ -227,8 +263,8 @@ function drawCount(block, errors) {
   lines.push(`${block.header.name || '분포'}`);
 
   rows.forEach((row, i) => {
-    const count = Number(row[countCol]);
-    if (Number.isNaN(count)) {
+    const count = 숫자읽기(row[countCol]);
+    if (count === null) {
       errors.push(`'${row[slotCol]}' 의 개수 '${row[countCol]}' 를 못 읽었다.`);
       return;
     }
@@ -320,12 +356,11 @@ function run(files, flags) {
   const results = [];
   let bad = 0;
   let 예시수 = 0;
+  let 블록수 = 0;
 
   for (const file of files) {
     const blocks = parseFenced(fs.readFileSync(file, 'utf8'), ['timeline', 'pacing', 'count']);
-    if (blocks.length === 0 && files.length === 1) {
-      console.log('timeline · pacing · count 블록을 못 찾았다.');
-    }
+    블록수 += blocks.length;
 
     for (const block of blocks) {
       const checked = checkBlock(block);
@@ -348,6 +383,10 @@ function run(files, flags) {
     }
   }
 
+  if (블록수 === 0) {
+    console.log('timeline · pacing · count 블록을 못 찾았다.');
+  }
+
   if (flags['--html']) {
     fs.writeFileSync(flags['--html'], renderHtml(results), 'utf8');
     console.log(`
@@ -360,7 +399,7 @@ HTML 저장 : ${flags['--html']}`);
   }
   console.log(`
 알림 ${bad}개${꼬리}`);
-  return bad;
+  return { bad, 블록수 };
 }
 
 function main() {
@@ -370,7 +409,21 @@ function main() {
     process.exit(2);
   }
 
-  if (run(files, flags) > 0) {
+  // `--html` 뒤에 파일 이름이 없으면 조용히 안 뽑고 끝나 버린다. 쓰는 법 오류로 알린다.
+  const html = flags['--html'];
+  if ('--html' in flags && (typeof html !== 'string' || html.startsWith('--'))) {
+    console.log('--html 뒤에 저장할 파일 이름을 적는다.');
+    process.exit(2);
+  }
+
+  const 결과 = run(files, flags);
+
+  // 블록이 하나도 없으면 검사한 것이 없다. tilemap·lint 와 같이 exit 2 다.
+  if (결과.블록수 === 0) {
+    process.exit(2);
+  }
+
+  if (결과.bad > 0) {
     process.exit(1);
   }
 }
