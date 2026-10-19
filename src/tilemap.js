@@ -891,7 +891,13 @@ HTML 저장 : ${flags['--html']}`);
 }
 
 if (require.main === module) {
-  main();
+  // 모르는 프로필·안 닫힌 펜스 같은 쓰는 법 오류는 스택 대신 한 줄로 알린다.
+  try {
+    main();
+  } catch (e) {
+    console.log(e.message);
+    process.exit(2);
+  }
 }
 
 module.exports = {

@@ -1,5 +1,7 @@
 // 도면 도구 공통 조각. 코드펜스 뽑기, 마크다운 표 읽기, 명령줄 인자 읽기.
 
+const path = require('path');
+
 // ```timeline name="강베기" total=34  ->  { name: '강베기', total: '34' }
 function parseHeader(line) {
   const header = {};
@@ -32,11 +34,11 @@ function parseFenced(text, tags) {
   let current = null;
   let justClosed = null;
 
-  for (const line of lines) {
+  for (const [i, line] of lines.entries()) {
     if (current === null) {
       const m = /^```+\s*(\w+)/.exec(line);
       if (m && wanted.includes(m[1])) {
-        current = { tag: m[1], header: parseHeader(line), lines: [] };
+        current = { tag: m[1], header: parseHeader(line), lines: [], 줄: i + 1 };
         justClosed = null;
         continue;
       }
@@ -56,6 +58,11 @@ function parseFenced(text, tags) {
     }
 
     current.lines.push(line);
+  }
+
+  // 닫는 펜스를 빠뜨리면 마지막 도면이 검사 없이 사라진다. 사용자 실수라 오류로 알린다.
+  if (current !== null) {
+    throw new Error(`${current.줄}번 줄 \`\`\`${current.tag} 펜스가 안 닫혔다. 끝에 \`\`\` 를 적는다.`);
   }
 
   return blocks;
@@ -207,6 +214,19 @@ function parseArgs(argv, valueFlags) {
       continue;
     }
     flags[arg] = true;
+  }
+
+  // 인자 순서를 틀리면 입력 마크다운을 HTML 로 덮어쓴다. .html 이 아니거나 입력 파일이면 막는다.
+  const inputs = files.map((f) => path.resolve(f));
+  for (const name of takesValue) {
+    if (!(name in flags)) {
+      continue;
+    }
+    const value = flags[name];
+    if (typeof value !== 'string' || !value.toLowerCase().endsWith('.html') || inputs.includes(path.resolve(value))) {
+      console.log(`${name} 뒤에는 저장할 .html 파일 이름을 적는다 (입력 파일과 달라야 한다). 받은 값 : ${value}`);
+      process.exit(2);
+    }
   }
 
   return { files, flags };

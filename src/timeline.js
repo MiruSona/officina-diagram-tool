@@ -409,13 +409,6 @@ function main() {
     process.exit(2);
   }
 
-  // `--html` 뒤에 파일 이름이 없으면 조용히 안 뽑고 끝나 버린다. 쓰는 법 오류로 알린다.
-  const html = flags['--html'];
-  if ('--html' in flags && (typeof html !== 'string' || html.startsWith('--'))) {
-    console.log('--html 뒤에 저장할 파일 이름을 적는다.');
-    process.exit(2);
-  }
-
   const 결과 = run(files, flags);
 
   // 블록이 하나도 없으면 검사한 것이 없다. tilemap·lint 와 같이 exit 2 다.
@@ -429,7 +422,13 @@ function main() {
 }
 
 if (require.main === module) {
-  main();
+  // 모르는 프로필·안 닫힌 펜스 같은 쓰는 법 오류는 스택 대신 한 줄로 알린다.
+  try {
+    main();
+  } catch (e) {
+    console.log(e.message);
+    process.exit(2);
+  }
 }
 
 module.exports = { parseRanges, buildTimeline, drawTimeline, drawPacing, drawCount, draw, checkBlock };

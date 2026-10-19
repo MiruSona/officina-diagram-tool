@@ -573,6 +573,50 @@ const 오타표결과 = 노드('lint.js', [오타표파일]);
 확인('C 머리글이 틀린 표는 exit 2 다', 오타표결과.status === 2, String(오타표결과.status));
 확인('C 머리글이 틀린 표를 「문제 없음」 이라 안 한다', !오타표결과.stdout.includes('문제 없음'), 오타표결과.stdout);
 확인('C 훑기도 머리글 오타를 잡는다', all.checkFile(오타표파일).errors.some((e) => e.includes('넣는 것')));
+
+// ---- --html 값 검사 · 안 닫힌 펜스 · 모르는 프로필 ----
+
+const 덮일입력 = path.join(임시2, '덮일입력.md');
+const 덮일글 = '```timeline name="짧은" total=4\n| 구간 | 프레임 |\n|---|---|\n| 선딜 | 1-4 |\n```\n';
+fs.writeFileSync(덮일입력, 덮일글, 'utf8');
+확인('G --html 뒤가 .html 이 아니면 exit 2 다', 노드('timeline.js', ['--html', 덮일입력]).status === 2);
+확인('G 순서를 틀려도 입력 마크다운을 덮지 않는다', fs.readFileSync(덮일입력, 'utf8') === 덮일글);
+const html입력 = path.join(임시2, '입력.html');
+fs.writeFileSync(html입력, 덮일글, 'utf8');
+확인('G --html 이 입력 파일과 같으면 exit 2 다', 노드('timeline.js', [html입력, '--html', html입력]).status === 2);
+확인('G 입력과 같은 --html 은 입력을 안 덮는다', fs.readFileSync(html입력, 'utf8') === 덮일글);
+const 깃발먹기 = spawnSync(
+  process.execPath,
+  [path.join(HERE, '..', 'src', 'tilemap.js'), path.join(HERE, '견본.md'), '--html', '--preview'],
+  { encoding: 'utf8', cwd: 임시2 }
+);
+확인('G tilemap --html --preview 는 exit 2 다', 깃발먹기.status === 2, String(깃발먹기.status));
+확인('G tilemap 이 --preview 라는 파일을 안 만든다', !fs.existsSync(path.join(임시2, '--preview')));
+const 좋은html = path.join(임시2, '결과.html');
+확인('G 제대로 된 --html 은 그대로 쓴다', 노드('timeline.js', [덮일입력, '--html', 좋은html]).status === 0 && fs.existsSync(좋은html));
+
+let 안닫힘오류 = '';
+try {
+  parseFenced('```timeline name="끝"\n| 구간 | 프레임 |\n', ['timeline']);
+} catch (e) {
+  안닫힘오류 = e.message;
+}
+확인('G 안 닫힌 펜스를 오류로 알린다', 안닫힘오류.includes('1번 줄'), 안닫힘오류);
+const 안닫힌파일 = path.join(임시2, '안닫힘.md');
+fs.writeFileSync(안닫힌파일, '```timeline name="끝" total=4\n| 구간 | 프레임 |\n|---|---|\n| 선딜 | 1-9 |\n', 'utf8');
+const 안닫힘결과 = 노드('timeline.js', [안닫힌파일]);
+확인('G 안 닫힌 펜스는 exit 2 다', 안닫힘결과.status === 2, String(안닫힘결과.status));
+확인('G 훑기도 안 닫힌 펜스를 잡는다', all.checkFile(안닫힌파일).errors.some((e) => e.includes('안 닫혔다')));
+
+const 모르는프로필 = path.join(임시2, '모르는프로필.md');
+fs.writeFileSync(모르는프로필, '```tilemap name="x" profile="없는것"\n#P#\n```\n', 'utf8');
+const 프로필결과 = 노드('tilemap.js', [모르는프로필]);
+확인('G 모르는 프로필은 exit 2 다', 프로필결과.status === 2, String(프로필결과.status));
+확인(
+  'G 모르는 프로필은 스택 없이 한 줄로 알린다',
+  프로필결과.stdout.includes('없는것') && !/\n\s+at /.test(프로필결과.stdout + 프로필결과.stderr),
+  프로필결과.stdout + 프로필결과.stderr
+);
 fs.rmSync(임시2, { recursive: true, force: true });
 
 // ---------------------------------------------------------------- 결과

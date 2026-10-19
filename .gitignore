@@ -13,3 +13,6 @@ Thumbs.db
 
 # 로컬 전용 문서 (저장소에 올리지 않는다)
 *.local.md
+
+# 비공개 자료
+Private/
